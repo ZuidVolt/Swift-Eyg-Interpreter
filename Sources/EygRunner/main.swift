@@ -16,24 +16,9 @@ struct Runner {
 
         guard !files.isEmpty else { fatalError("No .json files in \(exampleDir.path)") }
 
-        // example implementation of converting JSON to Expr for hello world example only
-        func toExpr(_ any: Any) -> Expr {
-            guard let dict = any as? [String: Any] else { fatalError() }
-            switch dict["0"] as? String {
-            case "a": return .apply(fn: toExpr(dict["f"]!), arg: toExpr(dict["a"]!))
-            case "s": return .string(dict["v"]! as! String)
-            case "i": return .int(dict["v"]! as! Int)
-            case "b": return .builtin(dict["l"]! as! String)
-            case "c": return .cons
-            case "u": return .empty
-            default: fatalError("Unsupported IR node")
-            }
-        }
-
         for file in files {
             let data = try Data(contentsOf: file)
-            let raw = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-            let expr = toExpr(raw)
+            let expr = try IRDecoder.decode(data)
 
             let result = try await interpret(expr)
             // clean string output
