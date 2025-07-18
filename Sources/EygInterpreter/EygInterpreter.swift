@@ -41,6 +41,7 @@ public indirect enum Expr: Sendable, Codable {
         case label = "l"
         case value = "v"
         case body  = "b"
+        case handler = "h_body"
         case function = "f"
         case argument = "a"
         case name = "l_name"
@@ -134,7 +135,7 @@ public indirect enum Expr: Sendable, Codable {
         case let .handle(l,h,b):
             try c.encode("h", forKey: .type)
             try c.encode(l, forKey: .label)
-            try c.encode(h, forKey: .body)
+            try c.encode(h, forKey: .handler)
             try c.encode(b, forKey: .body)
         case let .builtin(i): try c.encode("b", forKey: .type); try c.encode(i, forKey: .label)
         case let .resume(r): try c.encode("resume", forKey: .type); try c.encode(r, forKey: .body)
@@ -363,7 +364,7 @@ public actor StateMachine {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
         case let .tagged(tag: "Resume", inner):
-            guard case let .record(r) = inner, r["k"] != nil else { fatalError() }
+            guard case let .record(r) = inner, r["k"] != nil else { fatalError() } // the code checks for a "k" key but doesn't use it. will need to be fixed later
             setValue(arg)
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
