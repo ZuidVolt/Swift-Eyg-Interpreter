@@ -1,0 +1,12 @@
+{
+  "$schema": "https://biomejs.dev/schemas/latest/schema.json",
+  "linter": {
+    "enabled": false
+  },
+  "json": {
+    "parser": {
+      "allowComments": true,
+      "allowTrailingCommas": true
+    },
+}
+}

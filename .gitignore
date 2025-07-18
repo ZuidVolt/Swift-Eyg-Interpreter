@@ -1,0 +1,21 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+# IDE specific files
+.vscode/
+.idea/
+.ropeproject/
+# Miscellaneous
+*.log
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+
+.fake
