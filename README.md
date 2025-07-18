@@ -1,6 +1,6 @@
 # Swift-Eyg-Interpreter
 
-> A **Swift 6.1** implementation of the **EYG** language interpreter — a complete port of the tiny JavaScript interpreter that powers [eyg.run](https://eyg.run/).
+A **Swift 6.1** implementation of the **EYG** language interpreter — a complete port of the tiny JavaScript interpreter that powers [eyg.run](https://eyg.run/).
 
 This is my Swift translation of the [JavaScript Interpreter for EYG](https://github.com/CrowdHailer/eyg-lang/blob/main/packages/javascript_interpreter/src/interpreter.mjs).
 
@@ -41,7 +41,7 @@ A **Swift 6.1 port** of the EYG interpreter:
 | **Built-ins** | Synchronous, state-tied | Async closures with defined arity |
 | **Immutability** | Relies on the `immutable` library | uses Swift value types |
 
-## 🧠 What is EYG?
+## What is EYG?
 
 EYG guarantees programs never crash by checking them ahead-of-time — no type annotations required.
 
@@ -53,20 +53,23 @@ EYG guarantees programs never crash by checking them ahead-of-time — no type a
 | **Tiny IR** | AST with ~20 node types; easy to re-implement (as this Swift port proves) |
 | **Algebraic Effects** | Extensible Records, Unions, and Algebraic Effects |
 
-## 🔧 Key Technical Features
+## Key Technical Features
 
 ### Row Typing
+
 EYG’s type system uses **row typing** — a proven mathematical foundation providing structural typing with extensibility guarantees.
 
 ### Algebraic Effects
+
 Serialize program states when an effect is raised → seamless upgrades & crash-free execution. Use `perform` to declare effects and `handle` to manage them.
 
 ### Structural Editor Integration
+
 Treats code as a structured tree (not flat text) → more reliable program manipulation.
 
 ## 📁 Project Structure
 
-```
+```txt
 SwiftEygInterpreter/
 ├── Package.swift                 # Swift Package Manager config
 ├── Sources/
@@ -121,8 +124,3 @@ let result = interpreter.execute(program)
 Licensed under the [GNU General Public License v3.0](LICENSE).
 
 ---
-
-> **This is a fun hobby project exploring language implementation!** 🎉
-> While the EYG ecosystem offers serious tools for safe, predictable programming, this Swift interpreter is just for entertainment and learning.
-> For production-ready tools, check out the official implementations at [eyg.run](https://eyg.run/).
-> **Happy coding!** 🚀
