@@ -1,4 +1,4 @@
-# SwiftEygInterpreter 🏃‍♂️
+# Swift-Eyg-Interpreter
 
 > A **Swift 6.1** implementation of the **EYG** language interpreter — a complete port of the tiny JavaScript interpreter that powers [eyg.run](https://eyg.run/).
 
@@ -14,7 +14,7 @@ For production-ready EYG interpreters, use the official implementations at [eyg.
 
 ```bash
 # Clone & run
-git clone <this repo>
+git clone https://github.com/ZuidVolt/Swift-Eyg-Interpreter.git
 cd SwiftEygInterpreter
 swift run EygRunner
 # Expected output:
@@ -105,6 +105,7 @@ let result = interpreter.execute(program)
 ```
 
 > This is a personal project! While I’m not actively seeking contributions, feel free to:
+>
 > 1. Check the official EYG implementations for serious work
 > 2. Fork and experiment
 > 3. Remember — this is just for fun, no pressure!
