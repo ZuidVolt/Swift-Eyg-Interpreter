@@ -267,8 +267,31 @@ extension Cont: Equatable, Hashable {
 
 /// Immutable stack used for continuations and partial applications.
 public struct Stack<Element: Sendable>: Sendable, Codable
-where Element: Codable {
-    private indirect enum Link: Sendable, Codable { case empty; case node(Element, Link) }
+where Element: Codable & Hashable & Equatable {
+
+    private indirect enum Link: Sendable, Codable, Hashable, Equatable {
+        case empty
+        case node(Element, Link)
+
+        static func == (lhs: Link, rhs: Link) -> Bool {
+            switch (lhs, rhs) {
+            case (.empty, .empty): return true
+            case let (.node(l1, n1), .node(l2, n2)): return l1 == l2 && n1 == n2
+            default: return false
+            }
+        }
+
+        func hash(into hasher: inout Hasher) {
+            switch self {
+            case .empty: hasher.combine(0)
+            case let .node(v, n):
+                hasher.combine(1)
+                hasher.combine(v)
+                hasher.combine(n)
+            }
+        }
+    }
+
     private let root: Link
     private init(_ root: Link) { self.root = root }
     public init() { self.init(.empty) }
@@ -280,9 +303,17 @@ where Element: Codable {
     public func reversed() -> [Element] {
         var out: [Element] = []
         var cur = root
-        while case let .node(v, next) = cur { out.append(v); cur = next }
+        while case let .node(v, next) = cur {
+            out.append(v)
+            cur = next
+        }
         return out
     }
+}
+
+extension Stack: Equatable, Hashable where Element: Equatable & Hashable {
+    public static func == (lhs: Stack, rhs: Stack) -> Bool { lhs.root == rhs.root }
+    public func hash(into hasher: inout Hasher) { hasher.combine(root) }
 }
 
 // MARK: – Value (runtime) -----------------------------------------------------
