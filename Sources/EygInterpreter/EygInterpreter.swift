@@ -46,10 +46,10 @@ public indirect enum Expr: Sendable, Codable {
         case handler = "h"
         case function = "f"
         case argument = "a"
-        case name = "n"  // was "l"
+        case name = "n"  // was "l" can't use the same string in enun
         case then = "t"
         case comment = "c"
-        case tag = "m"  // was "l"
+        case tag = "m"  // was "l" can't use the same string in enun
         case cid = "cid"
         case project = "p"
         case release = "r"
@@ -70,7 +70,7 @@ public indirect enum Expr: Sendable, Codable {
             let arg = try c.decode(Expr.self, forKey: .argument)
             self = .apply(fn: fn, arg: arg)
         case "l":  // let
-            let n = try c.decode(String.self, forKey: .name)
+            let n = try c.decode(String.self, forKey: .label)
             let v = try c.decode(Expr.self, forKey: .value)
             let t = try c.decode(Expr.self, forKey: .then)
             self = .let(name: n, value: v, then: t)
@@ -140,7 +140,7 @@ public indirect enum Expr: Sendable, Codable {
             try c.encode(arg, forKey: .argument)
         case let .let(n, v, t):
             try c.encode("l", forKey: .type)
-            try c.encode(n, forKey: .name)
+            try c.encode(n, forKey: .label)
             try c.encode(v, forKey: .value)
             try c.encode(t, forKey: .then)
         case let .binary(bytes):
@@ -643,6 +643,8 @@ public actor StateMachine {
     }
     func push(_ k: Cont) { stack = stack.push(k) }
 
+    func setUnhandled(_ e: UnhandledEffect) { unhandled = e }
+
     // MARK: step
     func step() async throws {
         if isValue { try await apply() } else { try await eval() }
@@ -716,8 +718,9 @@ public actor StateMachine {
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
         case .delimit:
-            // Delimit frames stay on the stack while the body runs
-            break
+            // 6. Push the frame back; it is needed for recursive performs
+            push(k)
+            return
         }
     }
 
@@ -740,7 +743,8 @@ public actor StateMachine {
                 let resumeVal = r["k"],
                 case let .resume(resume) = resumeVal
             else { fatalError("Malformed Resume") }
-            _ = try await resume.invoke(arg)
+            let result = try await resume.invoke(arg)
+            setValue(result)
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
         }
@@ -820,35 +824,29 @@ private func performBuiltin(label: String) -> Builtin {
     return { state, args in
         let payload = args[0]
 
-        // 1. Walk the stack *from the top* (current frame → bottom)
+        // Walk the stack from the top
         var cursor = await state.stack
-        var remaining = Stack<Cont>.empty
         var handler: Value?
 
         while let frame = cursor.peek {
-            cursor = cursor.pop()
-            switch frame {
-            case let .delimit(l, h) where l == label:
+            if case let .delimit(l, h) = frame, l == label {
                 handler = h
-                remaining = cursor
-            default:
-                remaining = remaining.push(frame)
+                break
             }
+            cursor = cursor.pop()
         }
 
         guard let handler = handler else {
-            throw UnhandledEffect(label: label, payload: payload)
+            // 1. Suspend instead of throwing
+            await state.setIsValue(false)
+            await state.setUnhandled(UnhandledEffect(label: label, payload: payload))
+            return
         }
 
-        // 2. Build effect record and invoke handler
-        let resume = Resume(frames: remaining)
-        let effect = Value.record([
-            "payload": payload,
-            "Resume": .resume(resume)
-        ])
-
-        await state.push(.call(effect))
-        await state.setValue(handler)
+        // 2. Push the continuation *before* calling the handler
+        let resume = Resume(frames: cursor)
+        await state.push(.call(.resume(resume)))
+        await state.setValue(handler)        // handler receives *only* the payload
     }
 }
 
@@ -877,14 +875,6 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
                 deepEqual(args[0], args[1])
                     ? .tagged(tag: "True", inner: .empty)
                     : .tagged(tag: "False", inner: .empty))
-        }
-    ),
-    "print": (  // this is not part of the EYG spec
-        arity: 1,
-        fn: { state, args in
-            let msg = "\(args[0])"
-            print(msg)
-            await state.setValue(.string(msg))
         }
     ),
     "fix": (
@@ -1089,14 +1079,16 @@ public enum IREncoder {
 public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value]) async throws -> Value {
     let sm = StateMachine(src: e)
     while true {
-        try await sm.step()
+        do {
+            try await sm.step()
+        } catch let eff as UnhandledEffect {
+            guard let handler = extrinsic[eff.label] else { throw eff }
+            let v = try await handler(eff.payload)
+            await sm.resume(v)
+            continue
+        }
+
         let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
         if isVal && empty { return val! }
-
-        if let effect = await sm.unhandled {
-            guard let handler = extrinsic[effect.label] else { throw effect }
-            let resumeValue = try await handler(effect.payload)
-            await sm.resume(resumeValue)
-        }
     }
 }
