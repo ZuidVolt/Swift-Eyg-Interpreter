@@ -625,11 +625,17 @@ public actor StateMachine {
         case let .case(tag): setValue(.partial(arity: 3, applied: .empty, impl: caseBuiltin(tag: tag)))
         case .noCases: setValue(.partial(arity: 1, applied: .empty, impl: noCasesBuiltin))
         case let .perform(label): setValue(.partial(arity: 1, applied: .empty, impl: performBuiltin(label: label)))
-        case let .handle(label, _, body): push(.delimit(label: label, handler: try await interpret(body))); setValue(.closure(param: "_", body: body, env: env))
+        case let .handle(label, _, body):
+            push(.delimit(label: label, handler: try await interpret(body)))
+            setValue(.closure(param: "_", body: body, env: env))
         case .builtin(let id):
-            guard let entry = builtinTable[id] else { throw UnhandledEffect(label: "UndefinedBuiltin", payload: .string(id)) }
+            guard let entry = builtinTable[id] else {
+                throw UnhandledEffect(label: "UndefinedBuiltin", payload: .string(id))
+            }
             setValue(.partial(arity: entry.arity, applied: .empty, impl: entry.fn))
         case let .resume(cont): setValue(.resume(cont))
+        case let .reference(cid, _, _):
+            setValue(.string(cid))
         }
     }
 
@@ -640,9 +646,13 @@ public actor StateMachine {
         stack = stack.pop()
         switch k {
         case let .assign(name, then, savedEnv):
-            env = savedEnv; env[name] = v; setExpression(then)
+            env = savedEnv
+            env[name] = v
+            setExpression(then)
         case let .arg(expr, savedEnv):
-            push(.apply(v)); env = savedEnv; setExpression(expr)
+            push(.apply(v))
+            env = savedEnv
+            setExpression(expr)
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
         case .delimit: break
@@ -653,7 +663,9 @@ public actor StateMachine {
     func call(fn: Value, arg: Value) async throws {
         switch fn {
         case let .closure(p, b, savedEnv):
-            env = savedEnv; env[p] = arg; setExpression(b)
+            env = savedEnv
+            env[p] = arg
+            setExpression(b)
         case let .partial(arity, applied, impl):
             let newApplied = applied.push(arg)
             if newApplied.reversed().count == arity {
@@ -662,7 +674,7 @@ public actor StateMachine {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
         case let .tagged(tag: "Resume", inner):
-            guard case let .record(r) = inner, r["k"] != nil else { fatalError() } // the code checks for a "k" key but doesn't use it. will need to be fixed later
+            guard case let .record(r) = inner, r["k"] != nil else { fatalError() }  // the code checks for a "k" key but doesn't use it. will need to be fixed later
             setValue(arg)
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
@@ -684,7 +696,9 @@ public func interpret(_ e: Expr) async throws -> Value {
 // MARK: – Built-ins -----------------------------------------------------------
 
 private let consBuiltin: Builtin = { state, args in
-    guard case var .record(r) = args[1] else { fatalError() }
+    guard case var .record(r) = args[1] else {
+        throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects record as second arg"))
+    }
     r["head"] = args[0]
     await state.setValue(.record(r))
 }
