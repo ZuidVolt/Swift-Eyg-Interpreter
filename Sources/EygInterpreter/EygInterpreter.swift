@@ -425,6 +425,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
     case partial(arity: Int, applied: Stack<Value>, impl: Builtin)
     case tagged(tag: String, inner: Value)
     case record([String: Value])
+    case list(List)  // NEW
     case empty
     case tail
     case resume(Resume)
@@ -494,30 +495,57 @@ extension Value: Codable {
             let inner = try n.decode(Value.self)
             self = .tagged(tag: tag, inner: inner)
         case .record: self = .record(try c.decode([String: Value].self, forKey: .record))
-        case .empty:  self = .empty
-        case .tail:   self = .tail
+        case .list: self = .list(List(try c.decode([Value].self, forKey: .list)))
+        case .empty: self = .empty
+        case .tail: self = .tail
         default:
-            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
-                                                    debugDescription: "Value contains non-codable Builtin/Resume"))
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Value contains non-codable Builtin/Resume"))
         }
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .int(i):      try c.encode(i, forKey: .int)
-        case let .string(s):   try c.encode(s, forKey: .string)
-        case let .closure(p,b,e):
+        case let .int(i): try c.encode(i, forKey: .int)
+        case let .string(s): try c.encode(s, forKey: .string)
+        case let .closure(p, b, e):
             var n = c.nestedUnkeyedContainer(forKey: .closure)
-            try n.encode(p); try n.encode(b); try n.encode(e)
-        case let .tagged(t,i):
+            try n.encode(p)
+            try n.encode(b)
+            try n.encode(e)
+        case let .tagged(t, i):
             var n = c.nestedUnkeyedContainer(forKey: .tagged)
-            try n.encode(t); try n.encode(i)
-        case let .record(r):   try c.encode(r, forKey: .record)
-        case .empty:           try c.encode(true, forKey: .empty)
-        case .tail:            try c.encode(true, forKey: .tail)
-        default: break // partial & resume skipped for now
+            try n.encode(t)
+            try n.encode(i)
+        case let .record(r): try c.encode(r, forKey: .record)
+        case let .list(l):
+            try c.encode(l.array, forKey: .list)
+        case .empty: try c.encode(true, forKey: .empty)
+        case .tail: try c.encode(true, forKey: .tail)
+        default: break  // partial & resume skipped for now
         }
     }
+}
+
+// MARK: – Ordered List (drop-in replacement for [String:Value] tails)
+public struct List: Sendable, Equatable, Codable, CustomStringConvertible, Hashable {
+    private let impl: [Value]  // simple array gives cheap Equatable
+
+    public init(_ elements: [Value] = []) { impl = elements }
+    public var array: [Value] { impl }
+
+    // Cons / Tail helpers
+    public static let empty = List()
+    public var isEmpty: Bool { impl.isEmpty }
+    public func cons(_ head: Value) -> List { List([head] + impl) }
+    public var head: Value? { impl.first }
+    public var tail: List? { impl.isEmpty ? nil : List(Array(impl.dropFirst())) }
+
+    // MARK: Codable already works via [Value]
+
+    public var description: String { impl.description }
 }
 
 // MARK: – Interpreter --------------------------------------------------------
