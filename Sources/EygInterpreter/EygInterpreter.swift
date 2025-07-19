@@ -225,6 +225,46 @@ public enum Cont: Sendable, Codable {
     case delimit(label: String, handler: Value)
 }
 
+extension Cont: Equatable, Hashable {
+    public static func == (lhs: Cont, rhs: Cont) -> Bool {
+        switch (lhs, rhs) {
+        case let (.assign(n1, t1, e1), .assign(n2, t2, e2)):
+            return n1 == n2 && t1 == t2 && e1 == e2
+        case let (.arg(e1, env1), .arg(e2, env2)):
+            return e1 == e2 && env1 == env2
+        case let (.apply(v1), .apply(v2)): return v1 == v2
+        case let (.call(v1), .call(v2)): return v1 == v2
+        case let (.delimit(l1, h1), .delimit(l2, h2)):
+            return l1 == l2 && h1 == h2
+        default: return false
+        }
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case let .assign(n, t, e):
+            hasher.combine(0)
+            hasher.combine(n)
+            hasher.combine(t)
+            hasher.combine(e)
+        case let .arg(e, env):
+            hasher.combine(1)
+            hasher.combine(e)
+            hasher.combine(env)
+        case let .apply(v):
+            hasher.combine(2)
+            hasher.combine(v)
+        case let .call(v):
+            hasher.combine(3)
+            hasher.combine(v)
+        case let .delimit(l, h):
+            hasher.combine(4)
+            hasher.combine(l)
+            hasher.combine(h)
+        }
+    }
+}
+
 /// Immutable stack used for continuations and partial applications.
 public struct Stack<Element: Sendable>: Sendable, Codable
 where Element: Codable {
