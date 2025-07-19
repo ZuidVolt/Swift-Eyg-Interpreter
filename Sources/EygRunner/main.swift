@@ -30,7 +30,8 @@ struct Runner {
             fatalError("Resource folder 'examples' not found")
         }
 
-        let files = (try? FileManager.default
+        let files =
+            (try? FileManager.default
             .contentsOfDirectory(at: exampleDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []

@@ -40,17 +40,17 @@ public indirect enum Expr: Sendable, Codable {
     // MARK: Codable
     private enum CodingKeys: String, CodingKey {
         case type = "0"
-        case label = "l"
+        case label = "l"  // generic “label” key
         case value = "v"
         case body = "b"
-        case handler = "h_body"
+        case handler = "h"
         case function = "f"
         case argument = "a"
-        case name = "l_name"
+        case name = "n"  // was "l"
         case then = "t"
         case comment = "c"
-        case tag = "l_tag"
-        case cid = "l_cid"
+        case tag = "m"  // was "l"
+        case cid = "cid"
         case project = "p"
         case release = "r"
     }
@@ -69,11 +69,13 @@ public indirect enum Expr: Sendable, Codable {
             let fn = try c.decode(Expr.self, forKey: .function)
             let arg = try c.decode(Expr.self, forKey: .argument)
             self = .apply(fn: fn, arg: arg)
-        case "l":
+        case "l":  // let
             let n = try c.decode(String.self, forKey: .name)
             let v = try c.decode(Expr.self, forKey: .value)
             let t = try c.decode(Expr.self, forKey: .then)
             self = .let(name: n, value: v, then: t)
+        case "m":
+            self = .case(tag: try c.decode(String.self, forKey: .label))
         case "x":
             let b64 = try c.decode(String.self, forKey: .value)
             guard let data = Data(base64Encoded: b64) else {
@@ -95,7 +97,6 @@ public indirect enum Expr: Sendable, Codable {
         case "g": self = .select(try c.decode(String.self, forKey: .label))
         case "o": self = .overwrite(try c.decode(String.self, forKey: .label))
         case "t": self = .tag(try c.decode(String.self, forKey: .label))
-        case "m": self = .case(tag: try c.decode(String.self, forKey: .tag))
         case "n": self = .noCases
         case "p": self = .perform(try c.decode(String.self, forKey: .label))
         case "h":
@@ -172,7 +173,7 @@ public indirect enum Expr: Sendable, Codable {
             try c.encode(l, forKey: .label)
         case let .case(t):
             try c.encode("m", forKey: .type)
-            try c.encode(t, forKey: .tag)
+            try c.encode(t, forKey: .label)
         case .noCases: try c.encode("n", forKey: .type)
         case let .perform(l):
             try c.encode("p", forKey: .type)
@@ -506,6 +507,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
 extension Value: Codable {
     private enum CodingKeys: String, CodingKey {
         case int, string, closure, tagged, record, list, empty, tail, binary
+        case partial, resume
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -528,6 +530,20 @@ extension Value: Codable {
         case .empty: self = .empty
         case .tail: self = .tail
         case .binary: self = .binary(try c.decode([UInt8].self, forKey: .binary))
+        case .partial:
+            var n = try c.nestedUnkeyedContainer(forKey: .partial)
+            let arity = try n.decode(Int.self)
+            let applied = try n.decode(Stack<Value>.self)
+            let name = try n.decode(String.self)
+            guard let entry = builtinTable[name] else {
+                throw DecodingError.dataCorrupted(
+                    .init(
+                        codingPath: decoder.codingPath,
+                        debugDescription: "Unknown builtin \(name)"))
+            }
+            self = .partial(arity: arity, applied: applied, impl: entry.fn)
+        case .resume:
+            self = .resume(try c.decode(Resume.self, forKey: .resume))
         default:
             throw DecodingError.dataCorrupted(
                 .init(
@@ -556,7 +572,9 @@ extension Value: Codable {
         case .tail: try c.encode(true, forKey: .tail)
         case let .binary(b):
             try c.encode(b, forKey: .binary)
-        default: break  // partial & resume skipped for now
+        case let .resume(r):
+            try c.encode(r, forKey: .resume)
+        case .partial: break
         }
     }
 }
@@ -664,11 +682,11 @@ public actor StateMachine {
         case let .case(tag): setValue(.partial(arity: 3, applied: .empty, impl: caseBuiltin(tag: tag)))
         case .noCases: setValue(.partial(arity: 1, applied: .empty, impl: noCasesBuiltin))
         case let .perform(label): setValue(.partial(arity: 1, applied: .empty, impl: performBuiltin(label: label)))
-        case let .handle(label, _, body):
-            push(.delimit(label: label, handler: try await interpret(body)))
-            setValue(.closure(param: "_", body: body, env: env))
+        case let .handle(label, handler, body):
+            push(.delimit(label: label, handler: .closure(param: "_", body: handler, env: env)))
+            setExpression(body)
         case let .shallowHandle(label, handler, body):
-            push(.delimit(label: label, handler: try await interpret(handler)))
+            push(.delimit(label: label, handler: .closure(param: "_", body: handler, env: env)))
             setExpression(body)
         case .builtin(let id):
             guard let entry = builtinTable[id] else {
@@ -698,8 +716,8 @@ public actor StateMachine {
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
         case .delimit:
-          // Delimit frames stay on the stack while the body runs
-          break
+            // Delimit frames stay on the stack while the body runs
+            break
         }
     }
 
@@ -718,8 +736,11 @@ public actor StateMachine {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
         case let .tagged(tag: "Resume", inner):
-            guard case let .record(r) = inner, r["k"] != nil else { fatalError() }  // the code checks for a "k" key but doesn't use it. will need to be fixed later
-            setValue(arg)
+            guard case let .record(r) = inner,
+                let resumeVal = r["k"],
+                case let .resume(resume) = resumeVal
+            else { fatalError("Malformed Resume") }
+            _ = try await resume.invoke(arg)
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
         }
@@ -802,7 +823,7 @@ private func performBuiltin(label: String) -> Builtin {
         // 1. Walk the stack *from the top* (current frame → bottom)
         var cursor = await state.stack
         var remaining = Stack<Cont>.empty
-        var handler: Value? = nil
+        var handler: Value?
 
         while let frame = cursor.peek {
             cursor = cursor.pop()
@@ -810,7 +831,6 @@ private func performBuiltin(label: String) -> Builtin {
             case let .delimit(l, h) where l == label:
                 handler = h
                 remaining = cursor
-                break
             default:
                 remaining = remaining.push(frame)
             }
@@ -1045,11 +1065,11 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
                         tag: "Ok",
                         inner: .record([
                             "head": head,
-                            "tail": .list(tail),
+                            "tail": .list(tail)
                         ])))
             }
         }
-    ),
+    )
 ]
 
 // MARK: – Public helpers for JSON round-trip ---------------------------------
