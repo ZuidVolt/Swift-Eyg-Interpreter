@@ -481,7 +481,7 @@ extension Value: Codable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch c.allKeys.first {
-        case .int:    self = .int(try c.decode(Int.self, forKey: .int))
+        case .int: self = .int(try c.decode(Int.self, forKey: .int))
         case .string: self = .string(try c.decode(String.self, forKey: .string))
         case .closure:
             var n = try c.nestedUnkeyedContainer(forKey: .closure)
@@ -570,10 +570,16 @@ public actor StateMachine {
     init(src: Expr) { control = src }
 
     // MARK: helpers
-    public func setValue(_ v: Value) { value = v; isValue = true }
+    public func setValue(_ v: Value) {
+        value = v
+        isValue = true
+    }
     fileprivate func setStack(_ s: Stack<Cont>) { stack = s }
     fileprivate func setIsValue(_ b: Bool) { isValue = b }
-    func setExpression(_ e: Expr) { control = e; isValue = false }
+    func setExpression(_ e: Expr) {
+        control = e
+        isValue = false
+    }
     func lookup(_ name: String) throws -> Value {
         guard let v = env[name] else { throw UnhandledEffect(label: "UndefinedVariable", payload: .string(name)) }
         return v
@@ -599,8 +605,12 @@ public actor StateMachine {
         switch control {
         case .variable(let name): setValue(try lookup(name))
         case let .lambda(p, b): setValue(.closure(param: p, body: b, env: env))
-        case let .apply(fn, arg): push(.arg(arg, env)); setExpression(fn)
-        case let .let(name, val, then): push(.assign(name: name, then: then, env: env)); setExpression(val)
+        case let .apply(fn, arg):
+            push(.arg(arg, env))
+            setExpression(fn)
+        case let .let(name, val, then):
+            push(.assign(name: name, then: then, env: env))
+            setExpression(val)
         case .vacant: throw UnhandledEffect(label: "NotImplemented", payload: .empty)
         case .binary(let bits): setValue(.string(bits))
         case .int(let bits): setValue(.int(bits))
