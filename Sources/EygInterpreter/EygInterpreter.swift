@@ -41,7 +41,7 @@ public indirect enum Expr: Sendable, Codable {
         case type = "0"
         case label = "l"
         case value = "v"
-        case body  = "b"
+        case body = "b"
         case handler = "h_body"
         case function = "f"
         case argument = "a"
@@ -77,9 +77,11 @@ public indirect enum Expr: Sendable, Codable {
         case "i": self = .int(try c.decode(Int.self, forKey: .value))
         case "s": self = .string(try c.decode(String.self, forKey: .value))
         case "ta": self = .tail
-        case "c":  self = .cons
-        case "u":  self = .empty
-        case "z":  _ = try c.decode(String.self, forKey: .comment); self = .vacant
+        case "c": self = .cons
+        case "u": self = .empty
+        case "z":
+            _ = try c.decode(String.self, forKey: .comment)
+            self = .vacant
         case "e": self = .extend(try c.decode(String.self, forKey: .label))
         case "g": self = .select(try c.decode(String.self, forKey: .label))
         case "o": self = .overwrite(try c.decode(String.self, forKey: .label))
@@ -93,53 +95,89 @@ public indirect enum Expr: Sendable, Codable {
             let b = try c.decode(Expr.self, forKey: .body)
             self = .handle(label: l, handler: h, body: b)
         case "b": self = .builtin(try c.decode(String.self, forKey: .label))
-        case "#": _ = try c.decode(String.self, forKey: .cid); self = .builtin("CID_STUB")
+        case "#":
+            let cid = try c.decode(String.self, forKey: .cid)
+            let proj = try c.decodeIfPresent(String.self, forKey: .project)
+            let rel  = try c.decodeIfPresent(Int.self, forKey: .release)
+            self = .reference(cid: cid, project: proj, release: rel)
         case "resume": self = .resume(continuation: try c.decode(Resume.self, forKey: .body))
         default:
-            throw DecodingError.dataCorrupted(.init(
-                codingPath: decoder.codingPath,
-                debugDescription: "Unknown IR type '\(t)'"))
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unknown IR type '\(t)'"))
         }
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .variable(l): try c.encode("v", forKey: .type); try c.encode(l, forKey: .label)
-        case let .lambda(p,b):
+        case let .variable(l):
+            try c.encode("v", forKey: .type)
+            try c.encode(l, forKey: .label)
+        case let .lambda(p, b):
             try c.encode("f", forKey: .type)
             try c.encode(p, forKey: .label)
             try c.encode(b, forKey: .body)
-        case let .apply(fn,arg):
+        case let .apply(fn, arg):
             try c.encode("a", forKey: .type)
             try c.encode(fn, forKey: .function)
             try c.encode(arg, forKey: .argument)
-        case let .let(n,v,t):
+        case let .let(n, v, t):
             try c.encode("l", forKey: .type)
             try c.encode(n, forKey: .name)
             try c.encode(v, forKey: .value)
             try c.encode(t, forKey: .then)
-        case let .binary(v): try c.encode("x", forKey: .type); try c.encode(v, forKey: .value)
-        case let .int(v):    try c.encode("i", forKey: .type); try c.encode(v, forKey: .value)
-        case let .string(v): try c.encode("s", forKey: .type); try c.encode(v, forKey: .value)
+        case let .binary(v):
+            try c.encode("x", forKey: .type)
+            try c.encode(v, forKey: .value)
+        case let .int(v):
+            try c.encode("i", forKey: .type)
+            try c.encode(v, forKey: .value)
+        case let .string(v):
+            try c.encode("s", forKey: .type)
+            try c.encode(v, forKey: .value)
         case .tail: try c.encode("ta", forKey: .type)
-        case .cons: try c.encode("c",  forKey: .type)
+        case .cons: try c.encode("c", forKey: .type)
         case .empty: try c.encode("u", forKey: .type)
-        case .vacant: try c.encode("z", forKey: .type); try c.encode("", forKey: .comment)
-        case let .extend(l): try c.encode("e", forKey: .type); try c.encode(l, forKey: .label)
-        case let .select(l): try c.encode("g", forKey: .type); try c.encode(l, forKey: .label)
-        case let .overwrite(l): try c.encode("o", forKey: .type); try c.encode(l, forKey: .label)
-        case let .tag(l): try c.encode("t", forKey: .type); try c.encode(l, forKey: .label)
-        case let .case(t): try c.encode("m", forKey: .type); try c.encode(t, forKey: .tag)
+        case .vacant:
+            try c.encode("z", forKey: .type)
+            try c.encode("", forKey: .comment)
+        case let .extend(l):
+            try c.encode("e", forKey: .type)
+            try c.encode(l, forKey: .label)
+        case let .select(l):
+            try c.encode("g", forKey: .type)
+            try c.encode(l, forKey: .label)
+        case let .overwrite(l):
+            try c.encode("o", forKey: .type)
+            try c.encode(l, forKey: .label)
+        case let .tag(l):
+            try c.encode("t", forKey: .type)
+            try c.encode(l, forKey: .label)
+        case let .case(t):
+            try c.encode("m", forKey: .type)
+            try c.encode(t, forKey: .tag)
         case .noCases: try c.encode("n", forKey: .type)
-        case let .perform(l): try c.encode("p", forKey: .type); try c.encode(l, forKey: .label)
-        case let .handle(l,h,b):
+        case let .perform(l):
+            try c.encode("p", forKey: .type)
+            try c.encode(l, forKey: .label)
+        case let .handle(l, h, b):
             try c.encode("h", forKey: .type)
             try c.encode(l, forKey: .label)
             try c.encode(h, forKey: .handler)
             try c.encode(b, forKey: .body)
-        case let .builtin(i): try c.encode("b", forKey: .type); try c.encode(i, forKey: .label)
-        case let .resume(r): try c.encode("resume", forKey: .type); try c.encode(r, forKey: .body)
+        case let .builtin(i):
+            try c.encode("b", forKey: .type)
+            try c.encode(i, forKey: .label)
+        case let .resume(r):
+            try c.encode("resume", forKey: .type)
+            try c.encode(r, forKey: .body)
+        case let .reference(cid, proj, rel):
+            try c.encode("#", forKey: .type)
+            try c.encode(cid, forKey: .cid)
+            try c.encodeIfPresent(proj, forKey: .project)
+            try c.encodeIfPresent(rel, forKey: .release)
         }
     }
 }
@@ -159,7 +197,10 @@ public struct Resume: Sendable, Codable {
                 while true {
                     try await sm.step()
                     let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
-                    if isVal, empty { continuation.resume(returning: val!); return }
+                    if isVal, empty {
+                        continuation.resume(returning: val!)
+                        return
+                    }
                 }
             }
         }
