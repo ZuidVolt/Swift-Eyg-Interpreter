@@ -318,7 +318,107 @@ extension Stack: Equatable, Hashable where Element: Equatable & Hashable {
 
 // MARK: – Value (runtime) -----------------------------------------------------
 
-public indirect enum Value: Sendable {
+extension Expr: Equatable {
+    public static func == (lhs: Expr, rhs: Expr) -> Bool {
+        switch (lhs, rhs) {
+        case let (.variable(l1), .variable(l2)): return l1 == l2
+        case let (.lambda(p1, b1), .lambda(p2, b2)): return p1 == p2 && b1 == b2
+        case let (.apply(fn1, arg1), .apply(fn2, arg2)): return fn1 == fn2 && arg1 == arg2
+        case let (.let(n1, v1, t1), .let(n2, v2, t2)): return n1 == n2 && v1 == v2 && t1 == t2
+        case (.vacant, .vacant): return true
+        case let (.binary(v1), .binary(v2)): return v1 == v2
+        case let (.int(v1), .int(v2)): return v1 == v2
+        case let (.string(v1), .string(v2)): return v1 == v2
+        case (.tail, .tail): return true
+        case (.cons, .cons): return true
+        case (.empty, .empty): return true
+        case let (.extend(l1), .extend(l2)): return l1 == l2
+        case let (.select(l1), .select(l2)): return l1 == l2
+        case let (.overwrite(l1), .overwrite(l2)): return l1 == l2
+        case let (.tag(l1), .tag(l2)): return l1 == l2
+        case let (.case(t1), .case(t2)): return t1 == t2
+        case (.noCases, .noCases): return true
+        case let (.perform(l1), .perform(l2)): return l1 == l2
+        case let (.handle(l1, h1, b1), .handle(l2, h2, b2)): return l1 == l2 && h1 == h2 && b1 == b2
+        case let (.builtin(i1), .builtin(i2)): return i1 == i2
+        case let (.resume(r1), .resume(r2)): return r1 == r2
+        default: return false
+        }
+    }
+}
+
+extension Expr: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case let .variable(l):
+            hasher.combine(0)
+            hasher.combine(l)
+        case let .lambda(p, b):
+            hasher.combine(1)
+            hasher.combine(p)
+            hasher.combine(b)
+        case let .apply(fn, arg):
+            hasher.combine(2)
+            hasher.combine(fn)
+            hasher.combine(arg)
+        case let .let(n, v, t):
+            hasher.combine(3)
+            hasher.combine(n)
+            hasher.combine(v)
+            hasher.combine(t)
+        case .vacant: hasher.combine(4)
+        case let .binary(v):
+            hasher.combine(5)
+            hasher.combine(v)
+        case let .int(v):
+            hasher.combine(6)
+            hasher.combine(v)
+        case let .string(v):
+            hasher.combine(7)
+            hasher.combine(v)
+        case .tail: hasher.combine(8)
+        case .cons: hasher.combine(9)
+        case .empty: hasher.combine(10)
+        case let .extend(l):
+            hasher.combine(11)
+            hasher.combine(l)
+        case let .select(l):
+            hasher.combine(12)
+            hasher.combine(l)
+        case let .overwrite(l):
+            hasher.combine(13)
+            hasher.combine(l)
+        case let .tag(l):
+            hasher.combine(14)
+            hasher.combine(l)
+        case let .case(t):
+            hasher.combine(15)
+            hasher.combine(t)
+        case .noCases: hasher.combine(16)
+        case let .perform(l):
+            hasher.combine(17)
+            hasher.combine(l)
+        case let .handle(l, h, b):
+            hasher.combine(18)
+            hasher.combine(l)
+            hasher.combine(h)
+            hasher.combine(b)
+        case let .builtin(i):
+            hasher.combine(19)
+            hasher.combine(i)
+        case let .resume(r):
+            hasher.combine(20)
+            hasher.combine(r)
+        case let .reference(cid, proj, rel):
+            hasher.combine(21)
+            hasher.combine(cid)
+            hasher.combine(proj)
+            hasher.combine(rel)
+        }
+    }
+}
+
+public indirect enum Value: Sendable, Equatable, Hashable {
     case int(Int)
     case string(String)
     case closure(param: String, body: Expr, env: Env)
@@ -328,6 +428,48 @@ public indirect enum Value: Sendable {
     case empty
     case tail
     case resume(Resume)
+
+    // Needed for Hashable (Builtin is not Hashable; we only compare identity)
+    public static func == (lhs: Value, rhs: Value) -> Bool {
+        switch (lhs, rhs) {
+        case let (.int(a), .int(b)): return a == b
+        case let (.string(a), .string(b)): return a == b
+        case let (.closure(p1, b1, e1), .closure(p2, b2, e2)):
+            return p1 == p2 && b1 == b2 && e1 == e2
+        case let (.partial(ar1, ap1, _), .partial(ar2, ap2, _)):
+            return ar1 == ar2 && ap1 == ap2
+        case let (.tagged(t1, i1), .tagged(t2, i2)):
+            return t1 == t2 && i1 == i2
+        case let (.record(r1), .record(r2)):
+            return r1 == r2
+        case let (.list(l1), .list(l2)):
+            return l1 == l2
+        case (.empty, .empty): return true
+        case (.tail, .tail): return true
+        default: return false
+        }
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case let .int(i): hasher.combine(i)
+        case let .string(s): hasher.combine(s)
+        case let .closure(p, b, _):
+            hasher.combine(p)
+            hasher.combine(b)
+        case let .partial(ar, ap, _):
+            hasher.combine(ar)
+            hasher.combine(ap)
+        case let .tagged(t, i):
+            hasher.combine(t)
+            hasher.combine(i)
+        case let .record(r): hasher.combine(r)
+        case let .list(l): hasher.combine(l)
+        case .empty: hasher.combine(0)
+        case .tail: hasher.combine(1)
+        case .resume: hasher.combine(2)
+        }
+    }
 }
 
 // MARK: – Value Codable (only the parts we can encode)
