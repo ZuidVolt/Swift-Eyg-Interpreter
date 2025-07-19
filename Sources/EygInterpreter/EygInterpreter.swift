@@ -688,14 +688,18 @@ public actor StateMachine {
         case .noCases: setValue(.partial(arity: 1, applied: .empty, impl: noCasesBuiltin))
         case let .perform(label): setValue(.partial(arity: 1, applied: .empty, impl: performBuiltin(label: label)))
         case let .handle(label, handler, body):
-            push(.delimit(label: label,
-                          handler: .closure(param: "_", body: handler, env: env),
-                          deep: true))
+            push(
+                .delimit(
+                    label: label,
+                    handler: .closure(param: "_", body: handler, env: env),
+                    deep: true))
             setExpression(body)
         case let .shallowHandle(label, handler, body):
-            push(.delimit(label: label,
-                          handler: .closure(param: "_", body: handler, env: env),
-                          deep: false))
+            push(
+                .delimit(
+                    label: label,
+                    handler: .closure(param: "_", body: handler, env: env),
+                    deep: false))
             setExpression(body)
         case .builtin(let id):
             guard let entry = builtinTable[id] else {
@@ -725,8 +729,7 @@ public actor StateMachine {
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
         case let .delimit(_, _, deep):
-            if !deep { /* shallow – do NOT push the frame back */ }
-            else { push(k) }
+            if !deep { /* shallow – do NOT push the frame back */  } else { push(k) }
         }
     }
 
