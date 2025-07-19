@@ -498,7 +498,9 @@ public indirect enum Value: Sendable, Equatable, Hashable {
         case .empty: hasher.combine(0)
         case .tail: hasher.combine(1)
         case let .binary(b): hasher.combine(b)
-        case .resume: hasher.combine(3)
+        case let .resume(r):
+            hasher.combine(3)
+            hasher.combine(r)
         }
     }
 }
