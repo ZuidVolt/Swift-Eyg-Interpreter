@@ -475,7 +475,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
         case (.empty, .empty): return true
         case (.tail, .tail): return true
         case let (.binary(b1), .binary(b2)): return b1 == b2
-        case (.resume, .resume): return true
+        case let (.resume(r1), .resume(r2)): return r1 == r2
         default: return false
         }
     }
