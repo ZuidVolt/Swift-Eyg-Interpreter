@@ -18,7 +18,7 @@ private let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
         print(text, terminator: "")
         return .record([:])  // empty record = "done"
     },
-    "log": { payload in  // log is an alias for print to test js example
+    "Log": { payload in  // log is an alias for print to test js example
         try await extrinsic["print"]!(payload)
     }
 ]

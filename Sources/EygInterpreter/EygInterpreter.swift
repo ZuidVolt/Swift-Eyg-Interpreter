@@ -111,7 +111,8 @@ public indirect enum Expr: Sendable, Codable {
             self = .shallowHandle(label: l, handler: h, body: b)
         case "b": self = .builtin(try c.decode(String.self, forKey: .label))
         case "#":
-            let cid = try c.decode(String.self, forKey: .cid)
+            // try "l" first, fall back to "cid" for backwards compatibility
+            let cid = try c.decodeIfPresent(String.self, forKey: .label) ?? c.decode(String.self, forKey: .cid)
             let proj = try c.decodeIfPresent(String.self, forKey: .project)
             let rel = try c.decodeIfPresent(Int.self, forKey: .release)
             self = .reference(cid: cid, project: proj, release: rel)
@@ -243,7 +244,7 @@ public enum Cont: Sendable, Codable {
     case arg(Expr, Env)
     case apply(Value)
     case call(Value)
-    case delimit(label: String, handler: Value)
+    case delimit(label: String, handler: Value, deep: Bool)
 }
 
 extension Cont: Equatable, Hashable {
@@ -255,7 +256,7 @@ extension Cont: Equatable, Hashable {
             return e1 == e2 && env1 == env2
         case let (.apply(v1), .apply(v2)): return v1 == v2
         case let (.call(v1), .call(v2)): return v1 == v2
-        case let (.delimit(l1, h1), .delimit(l2, h2)):
+        case let (.delimit(l1, h1, _), .delimit(l2, h2, _)):
             return l1 == l2 && h1 == h2
         default: return false
         }
@@ -278,7 +279,7 @@ extension Cont: Equatable, Hashable {
         case let .call(v):
             hasher.combine(3)
             hasher.combine(v)
-        case let .delimit(l, h):
+        case let .delimit(l, h, _):
             hasher.combine(4)
             hasher.combine(l)
             hasher.combine(h)
@@ -687,10 +688,14 @@ public actor StateMachine {
         case .noCases: setValue(.partial(arity: 1, applied: .empty, impl: noCasesBuiltin))
         case let .perform(label): setValue(.partial(arity: 1, applied: .empty, impl: performBuiltin(label: label)))
         case let .handle(label, handler, body):
-            push(.delimit(label: label, handler: .closure(param: "_", body: handler, env: env)))
+            push(.delimit(label: label,
+                          handler: .closure(param: "_", body: handler, env: env),
+                          deep: true))
             setExpression(body)
         case let .shallowHandle(label, handler, body):
-            push(.delimit(label: label, handler: .closure(param: "_", body: handler, env: env)))
+            push(.delimit(label: label,
+                          handler: .closure(param: "_", body: handler, env: env),
+                          deep: false))
             setExpression(body)
         case .builtin(let id):
             guard let entry = builtinTable[id] else {
@@ -719,10 +724,9 @@ public actor StateMachine {
             setExpression(expr)
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
-        case .delimit:
-            // 6. Push the frame back; it is needed for recursive performs
-            push(k)
-            return
+        case let .delimit(_, _, deep):
+            if !deep { /* shallow – do NOT push the frame back */ }
+            else { push(k) }
         }
     }
 
@@ -740,12 +744,8 @@ public actor StateMachine {
             } else {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
-        case let .tagged(tag: "Resume", inner):
-            guard case let .record(r) = inner,
-                let resumeVal = r["k"],
-                case let .resume(resume) = resumeVal
-            else { fatalError("Malformed Resume") }
-            let result = try await resume.invoke(arg)
+        case let .resume(cont):
+            let result = try await cont.invoke(arg)
             setValue(result)
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
@@ -831,7 +831,7 @@ private func performBuiltin(label: String) -> Builtin {
         var handler: Value?
 
         while let frame = cursor.peek {
-            if case let .delimit(l, h) = frame, l == label {
+            if case let .delimit(l, h, _) = frame, l == label {
                 handler = h
                 break
             }
