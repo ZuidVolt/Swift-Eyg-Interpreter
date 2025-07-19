@@ -7,33 +7,34 @@ import Foundation
 
 /// Discriminated union for the surface syntax (full IR).
 public indirect enum Expr: Sendable, Codable {
-    case variable(String)                    // "v"
-    case lambda(param: String, body: Expr)   // "f"
-    case apply(fn: Expr, arg: Expr)          // "a"
-    case `let`(name: String, value: Expr, then: Expr) // "l"
-    case vacant                              // "z"
+    case variable(String)  // "v"
+    case lambda(param: String, body: Expr)  // "f"
+    case apply(fn: Expr, arg: Expr)  // "a"
+    case `let`(name: String, value: Expr, then: Expr)  // "l"
+    case vacant  // "z"
 
-    case binary(String)                      // "x"
-    case int(Int)                            // "i"
-    case string(String)                      // "s"
+    case binary(String)  // "x"
+    case int(Int)  // "i"
+    case string(String)  // "s"
 
-    case tail                                // "ta"
-    case cons                                // "c"
-    case empty                               // "u"
+    case tail  // "ta"
+    case cons  // "c"
+    case empty  // "u"
 
-    case extend(String)                      // "e"
-    case select(String)                      // "g"
-    case overwrite(String)                   // "o"
+    case extend(String)  // "e"
+    case select(String)  // "g"
+    case overwrite(String)  // "o"
 
-    case tag(String)                         // "t"
-    case `case`(tag: String)                 // "m"
-    case noCases                             // "n"
+    case tag(String)  // "t"
+    case `case`(tag: String)  // "m"
+    case noCases  // "n"
 
-    case perform(String)                     // "p"
-    case handle(label: String, handler: Expr, body: Expr) // "h"
-    case builtin(String)                     // "b"
+    case perform(String)  // "p"
+    case handle(label: String, handler: Expr, body: Expr)  // "h"
+    case builtin(String)  // "b"
 
-    case resume(continuation: Resume)        // internal continuation literal
+    case resume(continuation: Resume)  // internal continuation literal
+    case reference(cid: String, project: String?, release: Int?)
 
     // MARK: Codable
     private enum CodingKeys: String, CodingKey {
