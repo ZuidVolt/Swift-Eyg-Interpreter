@@ -207,6 +207,11 @@ public struct Resume: Sendable, Codable {
     }
 }
 
+extension Resume: Equatable, Hashable {
+    public static func == (lhs: Resume, rhs: Resume) -> Bool { lhs.frames == rhs.frames }
+    public func hash(into hasher: inout Hasher) { hasher.combine(frames) }
+}
+
 // MARK: – Runtime stack -------------------------------------------------------
 
 public typealias Env = [String: Value]
