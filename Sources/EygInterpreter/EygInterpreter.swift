@@ -34,13 +34,13 @@ public indirect enum Expr: Sendable, Codable {
     case shallowHandle(label: String, handler: Expr, body: Expr)  // "hs"
     case builtin(String)  // "b"
 
-    case resume(continuation: Resume)  // internal continuation literal
     case reference(cid: String, project: String?, release: Int?)
+    case release(pkg: String, ver: Int, cid: String)
 
     // MARK: Codable
     private enum CodingKeys: String, CodingKey {
         case type = "0"
-        case label = "l"  // generic “label” key
+        case label = "l"
         case value = "v"
         case body = "b"
         case handler = "h"
@@ -70,7 +70,7 @@ public indirect enum Expr: Sendable, Codable {
             let arg = try c.decode(Expr.self, forKey: .argument)
             self = .apply(fn: fn, arg: arg)
         case "l":  // let
-            let n = try c.decode(String.self, forKey: .label)
+            let n = try c.decode(String.self, forKey: .name)
             let v = try c.decode(Expr.self, forKey: .value)
             let t = try c.decode(Expr.self, forKey: .then)
             self = .let(name: n, value: v, then: t)
@@ -111,12 +111,13 @@ public indirect enum Expr: Sendable, Codable {
             self = .shallowHandle(label: l, handler: h, body: b)
         case "b": self = .builtin(try c.decode(String.self, forKey: .label))
         case "#":
-            // try "l" first, fall back to "cid" for backwards compatibility
-            let cid = try c.decodeIfPresent(String.self, forKey: .label) ?? c.decode(String.self, forKey: .cid)
-            let proj = try c.decodeIfPresent(String.self, forKey: .project)
-            let rel = try c.decodeIfPresent(Int.self, forKey: .release)
-            self = .reference(cid: cid, project: proj, release: rel)
-        case "resume": self = .resume(continuation: try c.decode(Resume.self, forKey: .body))
+            let cid = try c.decode(String.self, forKey: .label)
+            if let pkg = try c.decodeIfPresent(String.self, forKey: .project),
+                let ver = try c.decodeIfPresent(Int.self, forKey: .release) {
+                self = .release(pkg: pkg, ver: ver, cid: cid)
+            } else {
+                self = .reference(cid: cid, project: nil, release: nil)
+            }
         default:
             throw DecodingError.dataCorrupted(
                 .init(
@@ -141,7 +142,7 @@ public indirect enum Expr: Sendable, Codable {
             try c.encode(arg, forKey: .argument)
         case let .let(n, v, t):
             try c.encode("l", forKey: .type)
-            try c.encode(n, forKey: .label)
+            try c.encode(n, forKey: .name)
             try c.encode(v, forKey: .value)
             try c.encode(t, forKey: .then)
         case let .binary(bytes):
@@ -192,14 +193,16 @@ public indirect enum Expr: Sendable, Codable {
         case let .builtin(i):
             try c.encode("b", forKey: .type)
             try c.encode(i, forKey: .label)
-        case let .resume(r):
-            try c.encode("resume", forKey: .type)
-            try c.encode(r, forKey: .body)
         case let .reference(cid, proj, rel):
             try c.encode("#", forKey: .type)
-            try c.encode(cid, forKey: .cid)
+            try c.encode(cid, forKey: .label)
             try c.encodeIfPresent(proj, forKey: .project)
             try c.encodeIfPresent(rel, forKey: .release)
+        case let .release(pkg, ver, cid):
+            try c.encode("#", forKey: .type)
+            try c.encode(cid, forKey: .label)
+            try c.encode(pkg, forKey: .project)
+            try c.encode(ver, forKey: .release)
         }
     }
 }
@@ -208,6 +211,7 @@ public indirect enum Expr: Sendable, Codable {
 
 public struct Resume: Sendable, Codable {
     let frames: Stack<Cont>
+    let env: Env
     /// Resume the captured continuation with a payload.
     public func invoke(_ payload: Value) async throws -> Value {
         try await withCheckedThrowingContinuation { continuation in
@@ -215,6 +219,7 @@ public struct Resume: Sendable, Codable {
                 let sm = StateMachine(src: .variable("_"))
                 await sm.setValue(payload)
                 await sm.setStack(frames)
+                await sm.setEnv(env)
                 await sm.setIsValue(true)
                 while true {
                     try await sm.step()
@@ -363,7 +368,10 @@ extension Expr: Equatable {
         case let (.perform(l1), .perform(l2)): return l1 == l2
         case let (.handle(l1, h1, b1), .handle(l2, h2, b2)): return l1 == l2 && h1 == h2 && b1 == b2
         case let (.builtin(i1), .builtin(i2)): return i1 == i2
-        case let (.resume(r1), .resume(r2)): return r1 == r2
+        case let (.reference(cid1, proj1, rel1), .reference(cid2, proj2, rel2)):
+            return cid1 == cid2 && proj1 == proj2 && rel1 == rel2
+        case let (.release(pkg1, ver1, cid1), .release(pkg2, ver2, cid2)):
+            return pkg1 == pkg2 && ver1 == ver2 && cid1 == cid2
         default: return false
         }
     }
@@ -433,14 +441,16 @@ extension Expr: Hashable {
         case let .builtin(i):
             hasher.combine(20)
             hasher.combine(i)
-        case let .resume(r):
-            hasher.combine(21)
-            hasher.combine(r)
         case let .reference(cid, proj, rel):
             hasher.combine(22)
             hasher.combine(cid)
             hasher.combine(proj)
             hasher.combine(rel)
+        case let .release(pkg, ver, cid):
+            hasher.combine(23)
+            hasher.combine(pkg)
+            hasher.combine(ver)
+            hasher.combine(cid)
         }
     }
 }
@@ -630,6 +640,7 @@ public actor StateMachine {
     }
     fileprivate func setStack(_ s: Stack<Cont>) { stack = s }
     fileprivate func setIsValue(_ b: Bool) { isValue = b }
+    fileprivate func setEnv(_ e: Env) { env = e }
 
     func resume(_ value: Value) {
         setValue(value)
@@ -652,15 +663,6 @@ public actor StateMachine {
     func step() async throws {
         if isValue { try await apply() } else { try await eval() }
     }
-    private func applyBuiltin(_ impl: Builtin, _ args: [Value]) async throws {
-        var myself = self
-        try await impl(&myself, args)
-        value = await myself.value
-        env = await myself.env
-        stack = await myself.stack
-        control = await myself.control
-        isValue = await myself.isValue
-    }
 
     // MARK: eval
     private func eval() async throws {
@@ -677,9 +679,9 @@ public actor StateMachine {
         case .binary(let bytes): setValue(.binary(bytes))
         case .int(let bits): setValue(.int(bits))
         case .string(let bits): setValue(.string(bits))
-        case .tail: setValue(.tail)
+        case .tail: setValue(.list(.empty))  // spec: zero-element list
         case .cons: setValue(.partial(arity: 2, applied: .empty, impl: consBuiltin))
-        case .empty: setValue(.empty)
+        case .empty: setValue(.record([:]))  // spec: unit record
         case let .extend(label): setValue(.partial(arity: 2, applied: .empty, impl: extendBuiltin(label: label)))
         case let .select(label): setValue(.partial(arity: 1, applied: .empty, impl: selectBuiltin(label: label)))
         case let .overwrite(label): setValue(.partial(arity: 2, applied: .empty, impl: overwriteBuiltin(label: label)))
@@ -706,9 +708,12 @@ public actor StateMachine {
                 throw UnhandledEffect(label: "UndefinedBuiltin", payload: .string(id))
             }
             setValue(.partial(arity: entry.arity, applied: .empty, impl: entry.fn))
-        case let .resume(cont): setValue(.resume(cont))
         case let .reference(cid, _, _):
+            // TODO: look up in Env.references – for now keep old behaviour
             setValue(.string(cid))
+        case .release:
+            // TODO: check release exists – for now keep old behaviour
+            setValue(.string("release-placeholder"))
         }
     }
 
@@ -728,8 +733,9 @@ public actor StateMachine {
             setExpression(expr)
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
-        case let .delimit(_, _, deep):
-            if !deep { /* shallow – do NOT push the frame back */  } else { push(k) }
+        case let .delimit(lbl, h, deep):
+            // spec: pop unconditionally, re-add only if deep
+            if deep { push(.delimit(label: lbl, handler: h, deep: true)) }
         }
     }
 
@@ -743,7 +749,13 @@ public actor StateMachine {
         case let .partial(arity, applied, impl):
             let newApplied = applied.push(arg)
             if newApplied.reversed().count == arity {
-                try await applyBuiltin(impl, newApplied.reversed())
+                var tmp = self
+                try await impl(&tmp, newApplied.reversed())
+                await value = tmp.value
+                await env = tmp.env
+                await stack = tmp.stack
+                await control = tmp.control
+                await isValue = tmp.isValue
             } else {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
@@ -770,16 +782,24 @@ public func interpret(_ e: Expr) async throws -> Value {
 // MARK: – Built-ins -----------------------------------------------------------
 
 private let consBuiltin: Builtin = { state, args in
-    guard case let .list(tail) = args[1] else {
-        throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects list as second arg"))
+    switch args[1] {
+    case let .list(tail):
+        await state.setValue(.list(tail.cons(args[0])))
+    case .tail, .empty:
+        await state.setValue(.list(List([args[0]])))  // empty list becomes singleton
+    default:
+        throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects list/tail as second arg"))
     }
-    await state.setValue(.list(tail.cons(args[0])))
 }
 
 private func extendBuiltin(label: String) -> Builtin {
     return { state, args in
-        guard case var .record(r) = args[1] else {
-            throw UnhandledEffect(label: "TypeMismatch", payload: .string("extend expects record as second arg"))
+        var r: [String: Value]
+        switch args[1] {
+        case let .record(rec): r = rec
+        case .empty: r = [:]
+        default:
+            throw UnhandledEffect(label: "TypeMismatch", payload: .string("extend expects record/empty as second arg"))
         }
         r[label] = args[0]
         await state.setValue(.record(r))
@@ -788,7 +808,14 @@ private func extendBuiltin(label: String) -> Builtin {
 
 private func selectBuiltin(label: String) -> Builtin {
     return { state, args in
-        guard case let .record(r) = args[0], let v = r[label] else {
+        let r: [String: Value]
+        switch args[0] {
+        case let .record(rec): r = rec
+        case .empty: r = [:]
+        default:
+            throw UnhandledEffect(label: "TypeMismatch", payload: .string("select expects record/empty"))
+        }
+        guard let v = r[label] else {
             throw UnhandledEffect(label: "MissingLabel", payload: .string(label))
         }
         await state.setValue(v)
@@ -797,8 +824,13 @@ private func selectBuiltin(label: String) -> Builtin {
 
 private func overwriteBuiltin(label: String) -> Builtin {
     return { state, args in
-        guard case var .record(r) = args[1] else {
-            throw UnhandledEffect(label: "TypeMismatch", payload: .string("overwrite expects record as second arg"))
+        var r: [String: Value]
+        switch args[1] {
+        case let .record(rec): r = rec
+        case .empty: r = [:]
+        default:
+            throw UnhandledEffect(
+                label: "TypeMismatch", payload: .string("overwrite expects record/empty as second arg"))
         }
         r[label] = args[0]
         await state.setValue(.record(r))
@@ -828,30 +860,29 @@ private let noCasesBuiltin: Builtin = { _, args in
 private func performBuiltin(label: String) -> Builtin {
     return { state, args in
         let payload = args[0]
-
-        // Walk the stack from the top
-        var cursor = await state.stack
+        var frames = await state.stack
+        var collected: [Cont] = []
         var handler: Value?
 
-        while let frame = cursor.peek {
-            if case let .delimit(l, h, _) = frame, l == label {
+        while let frame = frames.peek {
+            frames = frames.pop()
+            if case let .delimit(l, h, deep) = frame, l == label {
                 handler = h
+                if deep { frames = frames.push(frame) }  // spec: re-add deep delim
                 break
             }
-            cursor = cursor.pop()
+            collected.append(frame)
         }
 
         guard let handler = handler else {
-            // 1. Suspend instead of throwing
             await state.setIsValue(false)
             await state.setUnhandled(UnhandledEffect(label: label, payload: payload))
             return
         }
-
-        // 2. Push the continuation *before* calling the handler
-        let resume = Resume(frames: cursor)
+        let framesUpToDelimiter = frames  // frames already excludes the delimiter
+        let resume = Resume(frames: framesUpToDelimiter, env: await state.env)
         await state.push(.call(.resume(resume)))
-        await state.setValue(handler)  // handler receives *only* the payload
+        await state.setValue(handler)
     }
 }
 
@@ -863,6 +894,7 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         fn: { state, args in
             func deepEqual(_ a: Value, _ b: Value) -> Bool {
                 switch (a, b) {
+                case let (.binary(b1), .binary(b2)): return b1 == b2
                 case let (.int(x), .int(y)): return x == y
                 case let (.string(x), .string(y)): return x == y
                 case let (.tagged(t1, i1), .tagged(t2, i2)):
@@ -1037,8 +1069,8 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
                 let head = l.head!
                 let tail = l.tail!
                 await state.push(.call(.closure(param: p, body: b, env: e)))
-                await state.push(.call(.list(tail)))
-                await state.push(.call(args[1]))
+                await state.push(.call(args[1]))  // initial acc
+                await state.push(.call(.list(tail)))  // rest of list
                 await state.push(.call(head))
                 await state.setValue(.closure(param: p, body: b, env: e))
             }
