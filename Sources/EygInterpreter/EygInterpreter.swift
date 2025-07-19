@@ -768,7 +768,38 @@ public actor StateMachine {
     }
 }
 
+// MARK: – Public helpers for JSON round-trip ---------------------------------
+
+public enum IRDecoder {
+    public static func decode(_ data: Data) throws -> Expr { try JSONDecoder().decode(Expr.self, from: data) }
+}
+
+public enum IREncoder {
+    public static func encode(_ expr: Expr) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(expr)
+    }
+}
+
 // MARK: – Public entry point --------------------------------------------------
+
+public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value]) async throws -> Value {
+    let sm = StateMachine(src: e)
+    while true {
+        do {
+            try await sm.step()
+        } catch let eff as UnhandledEffect {
+            guard let handler = extrinsic[eff.label] else { throw eff }
+            let v = try await handler(eff.payload)
+            await sm.resume(v)
+            continue
+        }
+
+        let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
+        if isVal && empty { return val! }
+    }
+}
 
 // public func interpret(_ e: Expr) async throws -> Value {
 //     let sm = StateMachine(src: e)
@@ -1098,34 +1129,3 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         }
     )
 ]
-
-// MARK: – Public helpers for JSON round-trip ---------------------------------
-
-public enum IRDecoder {
-    public static func decode(_ data: Data) throws -> Expr { try JSONDecoder().decode(Expr.self, from: data) }
-}
-
-public enum IREncoder {
-    public static func encode(_ expr: Expr) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(expr)
-    }
-}
-
-public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value]) async throws -> Value {
-    let sm = StateMachine(src: e)
-    while true {
-        do {
-            try await sm.step()
-        } catch let eff as UnhandledEffect {
-            guard let handler = extrinsic[eff.label] else { throw eff }
-            let v = try await handler(eff.payload)
-            await sm.resume(v)
-            continue
-        }
-
-        let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
-        if isVal && empty { return val! }
-    }
-}
