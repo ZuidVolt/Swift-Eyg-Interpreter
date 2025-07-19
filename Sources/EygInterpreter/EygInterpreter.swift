@@ -770,14 +770,14 @@ public actor StateMachine {
 
 // MARK: – Public entry point --------------------------------------------------
 
-public func interpret(_ e: Expr) async throws -> Value {
-    let sm = StateMachine(src: e)
-    while true {
-        try await sm.step()
-        let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
-        if isVal && empty { return val! }
-    }
-}
+// public func interpret(_ e: Expr) async throws -> Value {
+//     let sm = StateMachine(src: e)
+//     while true {
+//         try await sm.step()
+//         let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
+//         if isVal && empty { return val! }
+//     }
+// }
 
 // MARK: – Built-ins -----------------------------------------------------------
 
