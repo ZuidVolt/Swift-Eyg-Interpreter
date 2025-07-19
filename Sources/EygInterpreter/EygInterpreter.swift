@@ -476,7 +476,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
 // MARK: – Value Codable (only the parts we can encode)
 extension Value: Codable {
     private enum CodingKeys: String, CodingKey {
-        case int, string, closure, tagged, record, empty, tail
+        case int, string, closure, tagged, record, list, empty, tail
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -798,7 +798,7 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
                                 : .tagged(tag: "False", inner: .empty))
         }
     ),
-    "print": (
+    "print": ( // this is not part of the EYG spec
         arity: 1,
         fn: { state, args in
             let msg = "\(args[0])"
