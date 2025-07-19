@@ -846,7 +846,7 @@ private func performBuiltin(label: String) -> Builtin {
         // 2. Push the continuation *before* calling the handler
         let resume = Resume(frames: cursor)
         await state.push(.call(.resume(resume)))
-        await state.setValue(handler)        // handler receives *only* the payload
+        await state.setValue(handler)  // handler receives *only* the payload
     }
 }
 

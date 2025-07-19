@@ -10,20 +10,20 @@ import Foundation
 
 private let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
     "print": { payload in
-        let text = switch payload {
-        case .string(let s): s
-        default:              "\(payload)"
-        }
+        let text =
+            switch payload {
+            case .string(let s): s
+            default: "\(payload)"
+            }
         print(text, terminator: "")
-        return .record([:])   // empty record = “done”
+        return .record([:])  // empty record = "done"
     },
-
-    // Future handlers go below:
-    // "log": { payload in … return … }
+    "log": { payload in  // log is an alias for print to test js example
+        try await extrinsic["print"]!(payload)
+    }
 ]
 
 // MARK: - Runner -------------------------------------------------------------
-
 
 struct Runner {
     static func main() async {
@@ -31,7 +31,8 @@ struct Runner {
             fatalError("Resource folder ‘examples’ not found")
         }
 
-        let files = (try? FileManager.default
+        let files =
+            (try? FileManager.default
             .contentsOfDirectory(at: examplesDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
@@ -45,7 +46,7 @@ struct Runner {
 
         for file in files {
             do {
-                let expr   = try IRDecoder.decode(Data(contentsOf: file))
+                let expr = try IRDecoder.decode(Data(contentsOf: file))
                 let result = try await exec(expr, extrinsic: extrinsic)
                 print("\(file.lastPathComponent) → \(result)")
             } catch {
