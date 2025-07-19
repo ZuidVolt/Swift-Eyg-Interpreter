@@ -235,7 +235,7 @@ public struct Resume: Sendable, Codable {
 }
 
 extension Resume: Equatable, Hashable {
-    public static func == (lhs: Resume, rhs: Resume) -> Bool { lhs.frames == rhs.frames }
+    public static func == (lhs: Resume, rhs: Resume) -> Bool { lhs.frames == rhs.frames && lhs.env == rhs.env }
     public func hash(into hasher: inout Hasher) { hasher.combine(frames) }
 }
 
