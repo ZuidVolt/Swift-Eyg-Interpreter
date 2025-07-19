@@ -697,7 +697,9 @@ public actor StateMachine {
             setExpression(expr)
         case let .apply(fnVal): try await call(fn: fnVal, arg: v)
         case let .call(argVal): try await call(fn: v, arg: argVal)
-        case .delimit: break
+        case .delimit:
+          // Delimit frames stay on the stack while the body runs
+          break
         }
     }
 
@@ -796,16 +798,37 @@ private let noCasesBuiltin: Builtin = { _, args in
 private func performBuiltin(label: String) -> Builtin {
     return { state, args in
         let payload = args[0]
-        var stackCopy = await state.stack
-        while !stackCopy.isEmpty {
-            let k = stackCopy.peek!
-            stackCopy = stackCopy.pop()
-            if case let .delimit(l, _) = k, l == label {
-                let resume = Resume(frames: stackCopy)
-                let _: Value = .record(["Resume": .resume(resume), "payload": payload])  // _ == effectRecord
+
+        // 1. Walk the stack *from the top* (current frame → bottom)
+        var cursor = await state.stack
+        var remaining = Stack<Cont>.empty
+        var handler: Value? = nil
+
+        while let frame = cursor.peek {
+            cursor = cursor.pop()
+            switch frame {
+            case let .delimit(l, h) where l == label:
+                handler = h
+                remaining = cursor
+                break
+            default:
+                remaining = remaining.push(frame)
             }
         }
-        throw UnhandledEffect(label: label, payload: payload)
+
+        guard let handler = handler else {
+            throw UnhandledEffect(label: label, payload: payload)
+        }
+
+        // 2. Build effect record and invoke handler
+        let resume = Resume(frames: remaining)
+        let effect = Value.record([
+            "payload": payload,
+            "Resume": .resume(resume)
+        ])
+
+        await state.push(.call(effect))
+        await state.setValue(handler)
     }
 }
 
