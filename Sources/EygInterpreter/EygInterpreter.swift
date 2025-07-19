@@ -11,9 +11,9 @@ public indirect enum Expr: Sendable, Codable {
     case lambda(param: String, body: Expr)  // "f"
     case apply(fn: Expr, arg: Expr)  // "a"
     case `let`(name: String, value: Expr, then: Expr)  // "l"
-    case vacant  // "z"
+    case vacant(comment: String)  // "z"
 
-    case binary(String)  // "x"
+    case binary([UInt8])  // "x"
     case int(Int)  // "i"
     case string(String)  // "s"
 
@@ -73,15 +73,22 @@ public indirect enum Expr: Sendable, Codable {
             let v = try c.decode(Expr.self, forKey: .value)
             let t = try c.decode(Expr.self, forKey: .then)
             self = .let(name: n, value: v, then: t)
-        case "x": self = .binary(try c.decode(String.self, forKey: .value))
+        case "x":
+            let b64 = try c.decode(String.self, forKey: .value)
+            guard let data = Data(base64Encoded: b64) else {
+                throw DecodingError.dataCorruptedError(forKey: .value,
+                                                        in: c,
+                                                        debugDescription: "Invalid base64 for binary")
+            }
+            self = .binary([UInt8](data))
         case "i": self = .int(try c.decode(Int.self, forKey: .value))
         case "s": self = .string(try c.decode(String.self, forKey: .value))
         case "ta": self = .tail
         case "c": self = .cons
         case "u": self = .empty
         case "z":
-            _ = try c.decode(String.self, forKey: .comment)
-            self = .vacant
+            let comment = try c.decode(String.self, forKey: .comment)
+            self = .vacant(comment: comment)
         case "e": self = .extend(try c.decode(String.self, forKey: .label))
         case "g": self = .select(try c.decode(String.self, forKey: .label))
         case "o": self = .overwrite(try c.decode(String.self, forKey: .label))
@@ -128,9 +135,10 @@ public indirect enum Expr: Sendable, Codable {
             try c.encode(n, forKey: .name)
             try c.encode(v, forKey: .value)
             try c.encode(t, forKey: .then)
-        case let .binary(v):
+        case let .binary(bytes):
             try c.encode("x", forKey: .type)
-            try c.encode(v, forKey: .value)
+            let data = Data(bytes)
+            try c.encode(data.base64EncodedString(), forKey: .value)
         case let .int(v):
             try c.encode("i", forKey: .type)
             try c.encode(v, forKey: .value)
@@ -140,9 +148,9 @@ public indirect enum Expr: Sendable, Codable {
         case .tail: try c.encode("ta", forKey: .type)
         case .cons: try c.encode("c", forKey: .type)
         case .empty: try c.encode("u", forKey: .type)
-        case .vacant:
+        case let .vacant(comment):
             try c.encode("z", forKey: .type)
-            try c.encode("", forKey: .comment)
+            try c.encode(comment, forKey: .comment)
         case let .extend(l):
             try c.encode("e", forKey: .type)
             try c.encode(l, forKey: .label)
@@ -428,6 +436,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
     case list(List)  // NEW
     case empty
     case tail
+    case binary([UInt8])
     case resume(Resume)
 
     // Needed for Hashable (Builtin is not Hashable; we only compare identity)
@@ -447,6 +456,8 @@ public indirect enum Value: Sendable, Equatable, Hashable {
             return l1 == l2
         case (.empty, .empty): return true
         case (.tail, .tail): return true
+        case let (.binary(b1), .binary(b2)): return b1 == b2
+        case (.resume, .resume): return true
         default: return false
         }
     }
@@ -468,7 +479,8 @@ public indirect enum Value: Sendable, Equatable, Hashable {
         case let .list(l): hasher.combine(l)
         case .empty: hasher.combine(0)
         case .tail: hasher.combine(1)
-        case .resume: hasher.combine(2)
+        case let .binary(b): hasher.combine(b)
+        case .resume: hasher.combine(3)
         }
     }
 }
@@ -476,7 +488,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
 // MARK: – Value Codable (only the parts we can encode)
 extension Value: Codable {
     private enum CodingKeys: String, CodingKey {
-        case int, string, closure, tagged, record, list, empty, tail
+        case int, string, closure, tagged, record, list, empty, tail, binary
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -498,6 +510,7 @@ extension Value: Codable {
         case .list: self = .list(List(try c.decode([Value].self, forKey: .list)))
         case .empty: self = .empty
         case .tail: self = .tail
+        case .binary: self = .binary(try c.decode([UInt8].self, forKey: .binary))
         default:
             throw DecodingError.dataCorrupted(
                 .init(
@@ -524,6 +537,8 @@ extension Value: Codable {
             try c.encode(l.array, forKey: .list)
         case .empty: try c.encode(true, forKey: .empty)
         case .tail: try c.encode(true, forKey: .tail)
+        case let .binary(b):
+            try c.encode(b, forKey: .binary)
         default: break  // partial & resume skipped for now
         }
     }
@@ -612,7 +627,7 @@ public actor StateMachine {
             push(.assign(name: name, then: then, env: env))
             setExpression(val)
         case .vacant: throw UnhandledEffect(label: "NotImplemented", payload: .empty)
-        case .binary(let bits): setValue(.string(bits))
+        case .binary(let bytes): setValue(.binary(bytes))
         case .int(let bits): setValue(.int(bits))
         case .string(let bits): setValue(.string(bits))
         case .tail: setValue(.tail)
@@ -696,11 +711,10 @@ public func interpret(_ e: Expr) async throws -> Value {
 // MARK: – Built-ins -----------------------------------------------------------
 
 private let consBuiltin: Builtin = { state, args in
-    guard case var .record(r) = args[1] else {
-        throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects record as second arg"))
+    guard case let .list(tail) = args[1] else {
+        throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects list as second arg"))
     }
-    r["head"] = args[0]
-    await state.setValue(.record(r))
+    await state.setValue(.list(tail.cons(args[0])))
 }
 
 private func extendBuiltin(label: String) -> Builtin {
@@ -964,6 +978,24 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
                 await state.push(.call(args[1]))
                 await state.push(.call(head))
                 await state.setValue(.closure(param: p, body: b, env: e))
+            }
+        }
+    ),
+    "list_pop": (
+        arity: 1,
+        fn: { state, args in
+            guard case let .list(l) = args[0] else {
+                throw UnhandledEffect(label: "TypeMismatch", payload: .string("list_pop expects list"))
+            }
+            if l.isEmpty {
+                await state.setValue(.tagged(tag: "Error", inner: .empty))
+            } else {
+                let head = l.head!
+                let tail = l.tail!
+                await state.setValue(.tagged(tag: "Ok", inner: .record([
+                    "head": head,
+                    "tail": .list(tail)
+                ])))
             }
         }
     )
