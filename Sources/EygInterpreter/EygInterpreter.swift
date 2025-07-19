@@ -31,6 +31,7 @@ public indirect enum Expr: Sendable, Codable {
 
     case perform(String)  // "p"
     case handle(label: String, handler: Expr, body: Expr)  // "h"
+    case shallowHandle(label: String, handler: Expr, body: Expr)  // "hs"
     case builtin(String)  // "b"
 
     case resume(continuation: Resume)  // internal continuation literal
@@ -76,9 +77,10 @@ public indirect enum Expr: Sendable, Codable {
         case "x":
             let b64 = try c.decode(String.self, forKey: .value)
             guard let data = Data(base64Encoded: b64) else {
-                throw DecodingError.dataCorruptedError(forKey: .value,
-                                                        in: c,
-                                                        debugDescription: "Invalid base64 for binary")
+                throw DecodingError.dataCorruptedError(
+                    forKey: .value,
+                    in: c,
+                    debugDescription: "Invalid base64 for binary")
             }
             self = .binary([UInt8](data))
         case "i": self = .int(try c.decode(Int.self, forKey: .value))
@@ -98,14 +100,19 @@ public indirect enum Expr: Sendable, Codable {
         case "p": self = .perform(try c.decode(String.self, forKey: .label))
         case "h":
             let l = try c.decode(String.self, forKey: .label)
-            let h = try c.decode(Expr.self, forKey: .body)
+            let h = try c.decode(Expr.self, forKey: .handler)
             let b = try c.decode(Expr.self, forKey: .body)
             self = .handle(label: l, handler: h, body: b)
+        case "hs":
+            let l = try c.decode(String.self, forKey: .label)
+            let h = try c.decode(Expr.self, forKey: .handler)
+            let b = try c.decode(Expr.self, forKey: .body)
+            self = .shallowHandle(label: l, handler: h, body: b)
         case "b": self = .builtin(try c.decode(String.self, forKey: .label))
         case "#":
             let cid = try c.decode(String.self, forKey: .cid)
             let proj = try c.decodeIfPresent(String.self, forKey: .project)
-            let rel  = try c.decodeIfPresent(Int.self, forKey: .release)
+            let rel = try c.decodeIfPresent(Int.self, forKey: .release)
             self = .reference(cid: cid, project: proj, release: rel)
         case "resume": self = .resume(continuation: try c.decode(Resume.self, forKey: .body))
         default:
@@ -172,6 +179,11 @@ public indirect enum Expr: Sendable, Codable {
             try c.encode(l, forKey: .label)
         case let .handle(l, h, b):
             try c.encode("h", forKey: .type)
+            try c.encode(l, forKey: .label)
+            try c.encode(h, forKey: .handler)
+            try c.encode(b, forKey: .body)
+        case let .shallowHandle(l, h, b):
+            try c.encode("hs", forKey: .type)
             try c.encode(l, forKey: .label)
             try c.encode(h, forKey: .handler)
             try c.encode(b, forKey: .body)
@@ -411,14 +423,19 @@ extension Expr: Hashable {
             hasher.combine(l)
             hasher.combine(h)
             hasher.combine(b)
-        case let .builtin(i):
+        case let .shallowHandle(l, h, b):
             hasher.combine(19)
+            hasher.combine(l)
+            hasher.combine(h)
+            hasher.combine(b)
+        case let .builtin(i):
+            hasher.combine(20)
             hasher.combine(i)
         case let .resume(r):
-            hasher.combine(20)
+            hasher.combine(21)
             hasher.combine(r)
         case let .reference(cid, proj, rel):
-            hasher.combine(21)
+            hasher.combine(22)
             hasher.combine(cid)
             hasher.combine(proj)
             hasher.combine(rel)
@@ -581,6 +598,7 @@ public actor StateMachine {
     var stack: Stack<Cont> = .empty
     var control: Expr
     var isValue: Bool = false
+    var unhandled: UnhandledEffect?
 
     init(src: Expr) { control = src }
 
@@ -591,6 +609,12 @@ public actor StateMachine {
     }
     fileprivate func setStack(_ s: Stack<Cont>) { stack = s }
     fileprivate func setIsValue(_ b: Bool) { isValue = b }
+
+    func resume(_ value: Value) {
+        setValue(value)
+        unhandled = nil
+    }
+
     func setExpression(_ e: Expr) {
         control = e
         isValue = false
@@ -643,6 +667,9 @@ public actor StateMachine {
         case let .handle(label, _, body):
             push(.delimit(label: label, handler: try await interpret(body)))
             setValue(.closure(param: "_", body: body, env: env))
+        case let .shallowHandle(label, handler, body):
+            push(.delimit(label: label, handler: try await interpret(handler)))
+            setExpression(body)
         case .builtin(let id):
             guard let entry = builtinTable[id] else {
                 throw UnhandledEffect(label: "UndefinedBuiltin", payload: .string(id))
@@ -763,7 +790,6 @@ private func caseBuiltin(tag: String) -> Builtin {
 }
 
 private let noCasesBuiltin: Builtin = { _, args in
-    print(args[0])
     throw UnhandledEffect(label: "NoCasesMatched", payload: args[0])
 }
 
@@ -776,8 +802,7 @@ private func performBuiltin(label: String) -> Builtin {
             stackCopy = stackCopy.pop()
             if case let .delimit(l, _) = k, l == label {
                 let resume = Resume(frames: stackCopy)
-                let effectRecord: Value = .record(["Resume": .resume(resume), "payload": payload])
-                throw UnhandledEffect(label: label, payload: effectRecord)
+                let _: Value = .record(["Resume": .resume(resume), "payload": payload])  // _ == effectRecord
             }
         }
         throw UnhandledEffect(label: label, payload: payload)
@@ -792,27 +817,26 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         fn: { state, args in
             func deepEqual(_ a: Value, _ b: Value) -> Bool {
                 switch (a, b) {
-                case let (.int(x), .int(y)):            return x == y
-                case let (.string(x), .string(y)):      return x == y
+                case let (.int(x), .int(y)): return x == y
+                case let (.string(x), .string(y)): return x == y
                 case let (.tagged(t1, i1), .tagged(t2, i2)):
                     return t1 == t2 && deepEqual(i1, i2)
                 case let (.record(r1), .record(r2)):
-                    return r1.count == r2.count &&
-                           r1.allSatisfy { k, v in deepEqual(v, r2[k] ?? .empty) }
+                    return r1.count == r2.count && r1.allSatisfy { k, v in deepEqual(v, r2[k] ?? .empty) }
                 case let (.list(l1), .list(l2)):
-                    return l1.array.count == l2.array.count &&
-                           zip(l1.array, l2.array).allSatisfy(deepEqual)
+                    return l1.array.count == l2.array.count && zip(l1.array, l2.array).allSatisfy(deepEqual)
                 case (.empty, .empty), (.tail, .tail):
                     return true
                 default: return false
                 }
             }
-            await state.setValue(deepEqual(args[0], args[1])
-                                ? .tagged(tag: "True", inner: .empty)
-                                : .tagged(tag: "False", inner: .empty))
+            await state.setValue(
+                deepEqual(args[0], args[1])
+                    ? .tagged(tag: "True", inner: .empty)
+                    : .tagged(tag: "False", inner: .empty))
         }
     ),
-    "print": ( // this is not part of the EYG spec
+    "print": (  // this is not part of the EYG spec
         arity: 1,
         fn: { state, args in
             let msg = "\(args[0])"
@@ -965,7 +989,8 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 3,
         fn: { state, args in
             guard case let .list(l) = args[0],
-                  case let .closure(p, b, e) = args[2] else {
+                case let .closure(p, b, e) = args[2]
+            else {
                 throw UnhandledEffect(label: "TypeMismatch", payload: .string("list_fold expects a list and a closure"))
             }
             if l.isEmpty {
@@ -992,13 +1017,16 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
             } else {
                 let head = l.head!
                 let tail = l.tail!
-                await state.setValue(.tagged(tag: "Ok", inner: .record([
-                    "head": head,
-                    "tail": .list(tail)
-                ])))
+                await state.setValue(
+                    .tagged(
+                        tag: "Ok",
+                        inner: .record([
+                            "head": head,
+                            "tail": .list(tail),
+                        ])))
             }
         }
-    )
+    ),
 ]
 
 // MARK: – Public helpers for JSON round-trip ---------------------------------
@@ -1012,5 +1040,20 @@ public enum IREncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(expr)
+    }
+}
+
+public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value]) async throws -> Value {
+    let sm = StateMachine(src: e)
+    while true {
+        try await sm.step()
+        let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
+        if isVal && empty { return val! }
+
+        if let effect = await sm.unhandled {
+            guard let handler = extrinsic[effect.label] else { throw effect }
+            let resumeValue = try await handler(effect.payload)
+            await sm.resume(resumeValue)
+        }
     }
 }
