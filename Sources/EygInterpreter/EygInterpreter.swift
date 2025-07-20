@@ -213,6 +213,7 @@ public struct Resume: Sendable, Codable {
     let frames: Stack<Cont>
     let env: Env
     /// Resume the captured continuation with a payload.
+    // this doesn't handle potential infinite loops or stack overflow scenarios yet
     public func invoke(_ payload: Value) async throws -> Value {
         try await withCheckedThrowingContinuation { continuation in
             Task {
@@ -483,6 +484,8 @@ public indirect enum Value: Sendable, Equatable, Hashable {
         case let (.closure(p1, b1, e1), .closure(p2, b2, e2)):
             return p1 == p2 && b1 == b2 && e1 == e2
         case let (.partial(ar1, ap1, _), .partial(ar2, ap2, _)):
+            // Note: We can't compare function implementations directly
+            // This is a known limitation - partials with same arity/args but different impls will be equal
             return ar1 == ar2 && ap1 == ap2
         case let (.tagged(t1, i1), .tagged(t2, i2)):
             return t1 == t2 && i1 == i2
@@ -759,6 +762,8 @@ public actor StateMachine {
     }
 
     // MARK: - one-shot state mutation helper
+    // method creates a mutable copy of the actor but doesn't properly handle the actor isolation.
+    // This pattern can lead to data races and breaks Swift's actor safety guarantees.
     private func withMutableState<T: Sendable>(
         _ body: (inout StateMachine) async throws -> T
     ) async rethrows -> T {
