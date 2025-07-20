@@ -236,7 +236,10 @@ public struct Resume: Sendable, Codable {
 
 extension Resume: Equatable, Hashable {
     public static func == (lhs: Resume, rhs: Resume) -> Bool { lhs.frames == rhs.frames && lhs.env == rhs.env }
-    public func hash(into hasher: inout Hasher) { hasher.combine(frames) }
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(frames)
+        hasher.combine(env)
+    }
 }
 
 // MARK: – Runtime stack -------------------------------------------------------
@@ -739,6 +742,20 @@ public actor StateMachine {
         }
     }
 
+    // MARK: - one-shot state mutation helper
+    private func withMutableState<T: Sendable>(
+        _ body: (inout StateMachine) async throws -> T
+    ) async rethrows -> T {
+        var tmp = self  // mutable copy
+        let result = try await body(&tmp)
+        await value = tmp.value
+        await env = tmp.env
+        await stack = tmp.stack
+        await control = tmp.control
+        await isValue = tmp.isValue
+        return result
+    }
+
     // MARK: call
     func call(fn: Value, arg: Value) async throws {
         switch fn {
@@ -746,22 +763,21 @@ public actor StateMachine {
             env = savedEnv
             env[p] = arg
             setExpression(b)
+
         case let .partial(arity, applied, impl):
             let newApplied = applied.push(arg)
             if newApplied.reversed().count == arity {
-                var tmp = self
-                try await impl(&tmp, newApplied.reversed())
-                await value = tmp.value
-                await env = tmp.env
-                await stack = tmp.stack
-                await control = tmp.control
-                await isValue = tmp.isValue
+                try await withMutableState { sm in
+                    try await impl(&sm, newApplied.reversed())
+                }
             } else {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
+
         case let .resume(cont):
             let result = try await cont.invoke(arg)
             setValue(result)
+
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
         }
@@ -968,7 +984,7 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 2,
         fn: { state, args in
             guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_compare expects two ints"))
+                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_compare expects int for argument 1"))
             }
             let tag = a < b ? "Lt" : (a > b ? "Gt" : "Eq")
             await state.setValue(.tagged(tag: tag, inner: .empty))
