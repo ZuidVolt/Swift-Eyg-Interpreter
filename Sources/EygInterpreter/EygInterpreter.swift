@@ -298,7 +298,7 @@ extension Cont: Equatable, Hashable {
         }
     }
 }
-
+// MARK: Stack
 /// Immutable stack used for continuations and partial applications.
 public struct Stack<Element: Sendable>: Sendable, Codable
 where Element: Codable & Hashable & Equatable {
