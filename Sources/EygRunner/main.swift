@@ -53,8 +53,8 @@ struct Runner {
                 print("Decoded: \(expr)")
 
                 let result = try await exec(expr, extrinsic: extrinsic)
-                print("Raw result: \(result)")
                 print("\(file.lastPathComponent) → \(result)")
+                print("-------------")
             } catch {
                 print("\(file.lastPathComponent) → ERROR: \(error)")
             }
