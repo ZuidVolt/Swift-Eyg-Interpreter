@@ -626,6 +626,13 @@ public struct UnhandledEffect: Error, Sendable {
     let payload: Value
 }
 
+extension UnhandledEffect {
+    /// A factory function to create an UnhandledEffect.
+    public static func create(label: String, payload: Value) -> UnhandledEffect {
+        return UnhandledEffect(label: label, payload: payload)
+    }
+}
+
 /// All built-ins are just Swift closures.
 public typealias Builtin = @Sendable (inout StateMachine, [Value]) async throws -> Void
 

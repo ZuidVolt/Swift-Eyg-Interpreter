@@ -19,8 +19,10 @@ private let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
         return .record([:])
     },
     "Log": { payload in
-        // Reuse the print handler
-        try await extrinsic["print"]!(payload)
+        guard let printHandler = extrinsic["print"] else {
+            throw UnhandledEffect.create(label: "MissingPrintHandler", payload: payload)
+        }
+        return try await printHandler(payload)
     }
 ]
 
