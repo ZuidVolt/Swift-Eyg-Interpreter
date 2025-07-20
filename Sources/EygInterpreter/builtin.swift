@@ -141,6 +141,10 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
             guard case let .string(a) = args[0], case let .string(b) = args[1] else {
                 throw UnhandledEffect(label: "TypeMismatch", payload: .string("string_split expects two strings"))
             }
+            guard b.count == 1 else {
+                throw UnhandledEffect(
+                    label: "InvalidArgument", payload: .string("string_split expects single character separator"))
+            }
             let parts = a.split(separator: Character(b), omittingEmptySubsequences: false).map(String.init)
             let head = parts.first ?? ""
             let tail = List(parts.dropFirst().map(Value.string))
