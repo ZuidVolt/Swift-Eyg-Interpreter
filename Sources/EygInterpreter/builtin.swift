@@ -12,7 +12,7 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
                 case let (.tagged(t1, i1), .tagged(t2, i2)):
                     return t1 == t2 && deepEqual(i1, i2)
                 case let (.record(r1), .record(r2)):
-                    return r1.count == r2.count && r1.allSatisfy { k, v in deepEqual(v, r2[k] ?? .empty) }
+                    return r1.count == r2.count && r1.keys == r2.keys && r1.allSatisfy { k, v in deepEqual(v, r2[k]!) }
                 case let (.list(l1), .list(l2)):
                     return l1.array.count == l2.array.count && zip(l1.array, l2.array).allSatisfy(deepEqual)
                 case (.empty, .empty), (.tail, .tail):
