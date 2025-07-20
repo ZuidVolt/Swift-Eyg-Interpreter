@@ -22,4 +22,9 @@ run:
     swift run EygRunner
 
 run-release:
-    swift run -c release EygRunner
+    swift run -c release EygRunner \
+    -Xswiftc -whole-module-optimization \
+    -Xswiftc -cross-module-optimization \
+    -Xcc -march=native \
+    -mtune=native \
+    -Xcc -O3

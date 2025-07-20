@@ -817,6 +817,7 @@ public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -
     }
 }
 
+// alias for exec
 public let interpret = exec
 
 // MARK: – Built-ins -----------------------------------------------------------
