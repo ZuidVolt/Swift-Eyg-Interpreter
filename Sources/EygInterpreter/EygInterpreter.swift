@@ -213,7 +213,7 @@ public struct Resume: Sendable, Codable {
     let frames: Stack<Cont>
     let env: Env
     /// Resume the captured continuation with a payload.
-    // this doesn't handle potential infinite loops or stack overflow scenarios yet
+    /// this doesn't handle potential infinite loops or stack overflow scenarios yet
     public func invoke(_ payload: Value) async throws -> Value {
         try await withCheckedThrowingContinuation { continuation in
             Task {
@@ -360,7 +360,7 @@ extension Expr: Equatable {
         case let (.lambda(p1, b1), .lambda(p2, b2)): return p1 == p2 && b1 == b2
         case let (.apply(fn1, arg1), .apply(fn2, arg2)): return fn1 == fn2 && arg1 == arg2
         case let (.let(n1, v1, t1), .let(n2, v2, t2)): return n1 == n2 && v1 == v2 && t1 == t2
-        case (.vacant, .vacant): return true
+        case let (.vacant(c1), .vacant(c2)): return c1 == c2
         case let (.binary(v1), .binary(v2)): return v1 == v2
         case let (.int(v1), .int(v2)): return v1 == v2
         case let (.string(v1), .string(v2)): return v1 == v2
@@ -404,7 +404,9 @@ extension Expr: Hashable {
             hasher.combine(n)
             hasher.combine(v)
             hasher.combine(t)
-        case .vacant: hasher.combine(4)
+        case let .vacant(c): 
+                    hasher.combine(4)
+                    hasher.combine(c)
         case let .binary(v):
             hasher.combine(5)
             hasher.combine(v)
