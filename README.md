@@ -1,8 +1,8 @@
 # Swift-Eyg-Interpreter
 
-A **Swift 6.1** implementation of the **EYG** language interpreter — a complete port of the tiny JavaScript interpreter that powers [eyg.run](https://eyg.run/).
+A **Swift** implementation of the **EYG** language interpreter
 
-This is my Swift translation of the [JavaScript Interpreter for EYG](https://github.com/CrowdHailer/eyg-lang/blob/main/packages/javascript_interpreter/src/interpreter.mjs).
+This interpreter is based on the [JavaScript Interpreter for EYG](https://github.com/CrowdHailer/eyg-lang/blob/main/packages/javascript_interpreter/src/interpreter.mjs).
 
 > **This is a passion project created purely for fun and learning purposes.**
 > **NOT FOR PRODUCTION USE** — experimental, unfinished, and may be unpredictable.
@@ -18,28 +18,21 @@ git clone https://github.com/ZuidVolt/Swift-Eyg-Interpreter.git
 cd SwiftEygInterpreter
 swift run EygRunner
 # Expected output:
-# string("Hello, Eyg!")
-# hello.json → string("Hello, Eyg!")
+# Decoded: apply(fn: EygInterpreter.Expr.perform("print"), arg: EygInterpreter.Expr.string("Hello, Eyg!"))
+# Hello, Eyg!
+# Raw result: record([:])
+# hello.json → record([:])
 ```
-
-## What is Built
-
-A **Swift 6.1 port** of the EYG interpreter:
-
-- **Same IR** → identical semantics to the JavaScript, Gleam, and Go implementations
-- **Same builtins** → compatible effects & data types
-- **Same guarantees** → never crashes, deterministic, managed effects
-- **Native performance** → Swift’s compiled performance advantages
 
 ## Differences from the JavaScript implementation
 
 | Topic | JavaScript | Swift |
 |-------|------------|-------|
-| **Concurrency** | Synchronous & single-threaded | Actor-based state management |
-| **Error Handling** | Flags errors via a `break` property | Throws structured `UnhandledEffect` errors |
-| **Effects & Continuations** | Uses a `Resume` class | Throws `UnhandledEffect` (some features *work-in-progress*) |
-| **Built-ins** | Synchronous, state-tied | Async closures with defined arity |
-| **Immutability** | Relies on the `immutable` library | uses Swift value types |
+| **Concurrency** | Synchronous & single-threaded | Async actor-based state management |
+| **Error Handling** | Sets a break property on state | Throws structured `UnhandledEffect` errors |
+| **Effects & Continuations** | Uses `Resume` for internal handlers, sets break for extrinsic effects | Uses `Resume` for internal handlers, throws `UnhandledEffect` for extrinsic effects |
+| **Built-ins** | Synchronous functions tied to state | Async closures with defined arity |
+| **Immutability** | Uses `immutable` library | Uses Swift value types and custom immutable `Stack` |
 
 ## What is EYG?
 
@@ -81,43 +74,35 @@ SwiftEygInterpreter/
 
 ## 📖 Usage Examples
 
+
 ### Embedding in Applications
 
 ```swift
 import EygInterpreter
 
-let interpreter = EygInterpreter()
-let result = interpreter.execute(program)
+// Provide your own effect handlers
+let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
+    "print": { payload in
+        let text: String
+        switch payload {
+        case .string(let s): text = s
+        default: text = "\(payload)"
+        }
+        print(text)
+        return .record([:])
+    }
+]
+
+// Decode and run a program
+let expr = try IRDecoder.decode(programData)
+let result = try await exec(expr, extrinsic: extrinsic)
 ```
-
-## 🔌 Extending the Interpreter
-
-### Adding New Effects
-
-1. Register a new entry in `builtinTable`
-2. Provide a handler implementation
-3. Use `perform`/`handle` in your EYG programs
-
-**Example — adding a `File.Read` effect:**
-
-```swift
-// In your builtin table
-"File.Read": { path in
-    try String(contentsOfFile: path)
-}
-```
-
-> This is a personal project! While I’m not actively seeking contributions, feel free to:
->
-> 1. Check the official EYG implementations for serious work
-> 2. Fork and experiment
-> 3. Remember — this is just for fun, no pressure!
 
 ## 📚 Resources
 
 - **Language Website**: [eyg.run](https://eyg.run/) (the real thing!)
-- **Original Implementation**: [eyg-lang](https://github.com/CrowdHailer/eyg-lang)
-- **Specification**: Available at [eyg.run](https://eyg.run/)
+- **EYG Source**: [eyg-lang](https://github.com/CrowdHailer/eyg-lang)
+- **Specification**: Available at [eyg spec](https://github.com/CrowdHailer/eyg-lang/tree/main/spec)
 
 ## 📄 License
 
