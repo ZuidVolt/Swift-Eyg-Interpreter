@@ -800,7 +800,7 @@ public enum IREncoder {
 
 // MARK: – Public entry point --------------------------------------------------
 
-public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value]) async throws -> Value {
+public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value] = [:]) async throws -> Value {
     let sm = StateMachine(src: e)
     while true {
         do {
@@ -817,14 +817,7 @@ public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -
     }
 }
 
-// public func interpret(_ e: Expr) async throws -> Value {
-//     let sm = StateMachine(src: e)
-//     while true {
-//         try await sm.step()
-//         let (isVal, empty, val) = await (sm.isValue, sm.stack.isEmpty, sm.value)
-//         if isVal && empty { return val! }
-//     }
-// }
+public let interpret = exec
 
 // MARK: – Built-ins -----------------------------------------------------------
 
