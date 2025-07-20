@@ -329,6 +329,9 @@ where Element: Codable & Hashable & Equatable {
     private let root: Link
     private init(_ root: Link) { self.root = root }
     public init() { self.init(.empty) }
+    public init(_ elements: [Element]) {
+        self = elements.reversed().reduce(Stack.empty) { $0.push($1) }
+    }
     public static var empty: Stack { .init() }
     public var isEmpty: Bool { if case .empty = root { true } else { false } }
     public var peek: Element? { if case let .node(v, _) = root { v } else { nil } }
@@ -635,7 +638,7 @@ extension UnhandledEffect {
 }
 
 /// All built-ins are just Swift closures.
-public typealias Builtin = @Sendable (inout StateMachine, [Value]) async throws -> Void
+public typealias Builtin = @Sendable (isolated StateMachine, [Value]) async throws -> Void
 
 /// Mutable interpreter state isolated in an actor.
 public actor StateMachine {
@@ -751,28 +754,13 @@ public actor StateMachine {
             push(.apply(v, env))
             env = savedEnv
             setExpression(expr)
-        case let .apply(fnVal, _): try await call(fn: fnVal, arg: v)
-        case let .call(argVal, _): try await call(fn: v, arg: argVal)
+        case let .apply(fnVal, _):
+            try await self.call(fn: fnVal, arg: v)
+        case let .call(argVal, _):
+            try await self.call(fn: v, arg: argVal)
         case let .delimit(lbl, h, deep):
-            // spec: pop unconditionally, re-add only if deep
             if deep { push(.delimit(label: lbl, handler: h, deep: true)) }
         }
-    }
-
-    // MARK: - one-shot state mutation helper
-    // creates a mutable copy of the actor but doesn't properly handle the actor isolation.
-    // This pattern can lead to data races and breaks Swift's actor safety guarantees.
-    private func withMutableState<T: Sendable>(
-        _ body: (inout StateMachine) async throws -> T
-    ) async rethrows -> T {
-        var tmp = self  // mutable copy
-        let result = try await body(&tmp)
-        await value = tmp.value
-        await env = tmp.env
-        await stack = tmp.stack
-        await control = tmp.control
-        await isValue = tmp.isValue
-        return result
     }
 
     // MARK: call
@@ -786,17 +774,17 @@ public actor StateMachine {
         case let .partial(arity, applied, impl):
             let newApplied = applied.push(arg)
             if newApplied.reversed().count == arity {
-                // withMutableState is used as a hack as it is not possible to pass self as inout argument
-                try await withMutableState { sm in
-                    try await impl(&sm, newApplied.reversed())
-                }
+                try await impl(self, newApplied.reversed())
             } else {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
 
         case let .resume(cont):
             let result = try await cont.invoke(arg)
+            setStack(cont.frames)
+            setEnv(cont.env)
             setValue(result)
+            setIsValue(true)
 
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
@@ -855,9 +843,9 @@ public let interpret = exec
 private let consBuiltin: Builtin = { state, args in
     switch args[1] {
     case let .list(tail):
-        await state.setValue(.list(tail.cons(args[0])))
+        state.setValue(.list(tail.cons(args[0])))
     case .tail, .empty:
-        await state.setValue(.list(List([args[0]])))  // empty list becomes singleton
+        state.setValue(.list(List([args[0]])))  // empty list becomes singleton
     default:
         throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects list/tail as second arg"))
     }
@@ -873,7 +861,7 @@ private func extendBuiltin(label: String) -> Builtin {
             throw UnhandledEffect(label: "TypeMismatch", payload: .string("extend expects record/empty as second arg"))
         }
         r[label] = args[0]
-        await state.setValue(.record(r))
+        state.setValue(.record(r))
     }
 }
 
@@ -889,7 +877,7 @@ private func selectBuiltin(label: String) -> Builtin {
         guard let v = r[label] else {
             throw UnhandledEffect(label: "MissingLabel", payload: .string(label))
         }
-        await state.setValue(v)
+        state.setValue(v)
     }
 }
 
@@ -904,12 +892,12 @@ private func overwriteBuiltin(label: String) -> Builtin {
                 label: "TypeMismatch", payload: .string("overwrite expects record/empty as second arg"))
         }
         r[label] = args[0]
-        await state.setValue(.record(r))
+        state.setValue(.record(r))
     }
 }
 
 private func tagBuiltin(label: String) -> Builtin {
-    return { state, args in await state.setValue(.tagged(tag: label, inner: args[0])) }
+    return { state, args in state.setValue(.tagged(tag: label, inner: args[0])) }
 }
 
 private func caseBuiltin(tag: String) -> Builtin {
@@ -931,7 +919,7 @@ private let noCasesBuiltin: Builtin = { _, args in
 private func performBuiltin(label: String) -> Builtin {
     return { state, args in
         let payload = args[0]
-        var frames = await state.stack
+        var frames = state.stack
         var collected: [Cont] = []
         var handler: Value?
 
@@ -954,17 +942,17 @@ private func performBuiltin(label: String) -> Builtin {
             for frame in collected.reversed() {
                 resumeStack = resumeStack.push(frame)
             }
-            let resume = Resume(frames: resumeStack, env: await state.env)
+            let resume = Resume(frames: resumeStack, env: state.env)
             let resumeValue = Value.resume(resume)
 
             // Capture current environment for continuations
-            let currentEnv = await state.env
+            let currentEnv = state.env
 
             // Push handler call with payload, then resume with result
-            await state.push(.call(resumeValue, currentEnv))
-            await state.push(.apply(payload, currentEnv))
+            state.push(.call(resumeValue, currentEnv))
+            state.push(.apply(payload, currentEnv))
 
-            await state.setValue(handler)
+            state.setValue(handler)
         } else {
             // Throw UnhandledEffect instead of setting unhandled
             throw UnhandledEffect(label: label, payload: payload)
