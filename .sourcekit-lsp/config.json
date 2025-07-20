@@ -1,0 +1,6 @@
+{
+  "sdk": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk",
+  "target": "arm64-apple-macosx16.0",
+  "backgroundIndexing": true,
+  "backgroundPreparationMode": "enabled"
+}
