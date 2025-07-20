@@ -636,7 +636,6 @@ public actor StateMachine {
     var stack: Stack<Cont> = .empty
     var control: Expr
     var isValue: Bool = false
-    var unhandled: UnhandledEffect?
     var references: [String: Value] = [:]
 
     init(src: Expr) { control = src }
@@ -652,7 +651,6 @@ public actor StateMachine {
 
     func resume(_ value: Value) {
         setValue(value)
-        unhandled = nil
     }
 
     func setExpression(_ e: Expr) {
@@ -664,8 +662,6 @@ public actor StateMachine {
         return v
     }
     func push(_ k: Cont) { stack = stack.push(k) }
-
-    func setUnhandled(_ e: UnhandledEffect) { unhandled = e }
 
     // MARK: step
     func step() async throws {
@@ -918,27 +914,40 @@ private func performBuiltin(label: String) -> Builtin {
         var collected: [Cont] = []
         var handler: Value?
 
+        // Search for handler
         while let frame = frames.peek {
             frames = frames.pop()
             if case let .delimit(l, h, deep) = frame, l == label {
                 handler = h
-                if deep { frames = frames.push(frame) }  // spec: re-add deep delim
+                if deep {
+                    frames = frames.push(frame)
+                }
                 break
             }
             collected.append(frame)
         }
 
-        guard let handler = handler else {
-            await state.setIsValue(false)
-            await state.setUnhandled(UnhandledEffect(label: label, payload: payload))
-            return
+        if let handler = handler {
+            // Create resume continuation
+            var resumeStack = Stack<Cont>.empty
+            for frame in collected.reversed() {
+                resumeStack = resumeStack.push(frame)
+            }
+            let resume = Resume(frames: resumeStack, env: await state.env)
+            let resumeValue = Value.resume(resume)
+
+            // Capture current environment for continuations
+            let currentEnv = await state.env
+
+            // Push handler call with payload, then resume with result
+            await state.push(.call(resumeValue, currentEnv))
+            await state.push(.apply(payload, currentEnv))
+
+            await state.setValue(handler)
+        } else {
+            // Throw UnhandledEffect instead of setting unhandled
+            throw UnhandledEffect(label: label, payload: payload)
         }
-        // TODO:  finish the reference / release so that resume can be called properly
-        // let framesUpToDelimiter = frames  // frames already excludes the delimiter
-        // let resume = Resume(frames: Stack(collected.reversed().map { $0 }), env: await state.env)
-        // await state.push(.call(.resume(resume), [:]))
-        await state.setUnhandled(UnhandledEffect(label: label, payload: payload))
-        await state.setValue(handler)
     }
 }
 

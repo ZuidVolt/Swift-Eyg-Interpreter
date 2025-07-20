@@ -10,15 +10,16 @@ import Foundation
 
 private let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
     "print": { payload in
-        let text =
-            switch payload {
-            case .string(let s): s
-            default: "\(payload)"
-            }
-        print(text, terminator: "")
-        return .record([:])  // empty record = "done"
+        let text: String
+        switch payload {
+        case .string(let s): text = s
+        default: text = "\(payload)"
+        }
+        print(text)
+        return .record([:])
     },
-    "Log": { payload in  // log is an alias for print to test js example
+    "Log": { payload in
+        // Reuse the print handler
         try await extrinsic["print"]!(payload)
     }
 ]
@@ -47,7 +48,10 @@ struct Runner {
         for file in files {
             do {
                 let expr = try IRDecoder.decode(Data(contentsOf: file))
+                print("Decoded: \(expr)")
+
                 let result = try await exec(expr, extrinsic: extrinsic)
+                print("Raw result: \(result)")
                 print("\(file.lastPathComponent) → \(result)")
             } catch {
                 print("\(file.lastPathComponent) → ERROR: \(error)")
