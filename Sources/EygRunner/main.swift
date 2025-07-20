@@ -34,15 +34,15 @@ struct Runner {
             fatalError("Resource folder ‘examples’ not found")
         }
 
-        let files =
-            (try? FileManager.default
-            .contentsOfDirectory(at: examplesDir, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension == "json" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
-
-        if files.isEmpty {
-            print("---- No JSON examples found")
-            return
+        let files: [URL]
+        do {
+            files = try FileManager.default
+                .contentsOfDirectory(at: examplesDir, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "json" }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        } catch {
+            print("---- Error reading examples directory: \(error)")
+            files = []
         }
 
         print("---- Running \(files.count) example(s) via extrinsic handlers\n")
