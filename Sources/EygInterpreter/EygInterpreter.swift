@@ -250,8 +250,8 @@ public typealias Env = [String: Value]
 public enum Cont: Sendable, Codable {
     case assign(name: String, then: Expr, env: Env)
     case arg(Expr, Env)
-    case apply(Value)
-    case call(Value)
+    case apply(Value, Env)
+    case call(Value, Env)
     case delimit(label: String, handler: Value, deep: Bool)
 }
 
@@ -262,8 +262,10 @@ extension Cont: Equatable, Hashable {
             return n1 == n2 && t1 == t2 && e1 == e2
         case let (.arg(e1, env1), .arg(e2, env2)):
             return e1 == e2 && env1 == env2
-        case let (.apply(v1), .apply(v2)): return v1 == v2
-        case let (.call(v1), .call(v2)): return v1 == v2
+        case let (.apply(v1, e1), .apply(v2, e2)):
+            return v1 == v2 && e1 == e2
+        case let (.call(v1, e1), .call(v2, e2)):
+            return v1 == v2 && e1 == e2
         case let (.delimit(l1, h1, _), .delimit(l2, h2, _)):
             return l1 == l2 && h1 == h2
         default: return false
@@ -281,12 +283,14 @@ extension Cont: Equatable, Hashable {
             hasher.combine(1)
             hasher.combine(e)
             hasher.combine(env)
-        case let .apply(v):
+        case let .apply(v, e):
             hasher.combine(2)
             hasher.combine(v)
-        case let .call(v):
+            hasher.combine(e)
+        case let .call(v, e):
             hasher.combine(3)
             hasher.combine(v)
+            hasher.combine(e)
         case let .delimit(l, h, _):
             hasher.combine(4)
             hasher.combine(l)
@@ -633,6 +637,7 @@ public actor StateMachine {
     var control: Expr
     var isValue: Bool = false
     var unhandled: UnhandledEffect?
+    var references: [String: Value] = [:]
 
     init(src: Expr) { control = src }
 
@@ -682,7 +687,7 @@ public actor StateMachine {
         case .binary(let bytes): setValue(.binary(bytes))
         case .int(let bits): setValue(.int(bits))
         case .string(let bits): setValue(.string(bits))
-        case .tail: setValue(.list(.empty))  // spec: zero-element list
+        case .tail: setValue(.list(.empty))
         case .cons: setValue(.partial(arity: 2, applied: .empty, impl: consBuiltin))
         case .empty: setValue(.record([:]))  // spec: unit record
         case let .extend(label): setValue(.partial(arity: 2, applied: .empty, impl: extendBuiltin(label: label)))
@@ -711,12 +716,20 @@ public actor StateMachine {
                 throw UnhandledEffect(label: "UndefinedBuiltin", payload: .string(id))
             }
             setValue(.partial(arity: entry.arity, applied: .empty, impl: entry.fn))
+        // TODO:  finish the reference / release
         case let .reference(cid, _, _):
-            // TODO: look up in Env.references – for now keep old behaviour
-            setValue(.string(cid))
-        case .release:
-            // TODO: check release exists – for now keep old behaviour
-            setValue(.string("release-placeholder"))
+            guard let v = references[cid] else {
+                throw UnhandledEffect(label: "UndefinedReference", payload: .string(cid))
+            }
+            setValue(v)
+        case let .release(pkg, ver, cid):
+            throw UnhandledEffect(
+                label: "UndefinedRelease",
+                payload: .record([
+                    "package": .string(pkg),
+                    "release": .int(ver),
+                    "cid": .string(cid)
+                ]))
         }
     }
 
@@ -731,11 +744,11 @@ public actor StateMachine {
             env[name] = v
             setExpression(then)
         case let .arg(expr, savedEnv):
-            push(.apply(v))
+            push(.apply(v, env))
             env = savedEnv
             setExpression(expr)
-        case let .apply(fnVal): try await call(fn: fnVal, arg: v)
-        case let .call(argVal): try await call(fn: v, arg: argVal)
+        case let .apply(fnVal, _): try await call(fn: fnVal, arg: v)
+        case let .call(argVal, _): try await call(fn: v, arg: argVal)
         case let .delimit(lbl, h, deep):
             // spec: pop unconditionally, re-add only if deep
             if deep { push(.delimit(label: lbl, handler: h, deep: true)) }
@@ -920,9 +933,11 @@ private func performBuiltin(label: String) -> Builtin {
             await state.setUnhandled(UnhandledEffect(label: label, payload: payload))
             return
         }
-        let framesUpToDelimiter = frames  // frames already excludes the delimiter
-        let resume = Resume(frames: framesUpToDelimiter, env: await state.env)
-        await state.push(.call(.resume(resume)))
+        // TODO:  finish the reference / release so that resume can be called properly
+        // let framesUpToDelimiter = frames  // frames already excludes the delimiter
+        // let resume = Resume(frames: Stack(collected.reversed().map { $0 }), env: await state.env)
+        // await state.push(.call(.resume(resume), [:]))
+        await state.setUnhandled(UnhandledEffect(label: label, payload: payload))
         await state.setValue(handler)
     }
 }
@@ -959,8 +974,12 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 1,
         fn: { state, args in
             let builder = args[0]
-            await state.push(.call(builder))
-            await state.push(.call(.partial(arity: 2, applied: .empty, impl: builtinTable["fixed"]!.fn)))
+            await state.push(.call(builder, [:]))
+            await state.push(
+                .call(
+                    .partial(
+                        arity: 2, applied: .empty,
+                        impl: builtinTable["fixed"]!.fn), [:]))
             await state.setValue(builder)
         }
     ),
@@ -969,8 +988,8 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         fn: { state, args in
             let builder = args[0]
             let arg = args[1]
-            await state.push(.call(arg))
-            await state.push(.call(.partial(arity: 2, applied: .empty, impl: builtinTable["fixed"]!.fn)))
+            await state.push(.call(arg, [:]))
+            await state.push(.call(.partial(arity: 2, applied: .empty, impl: builtinTable["fixed"]!.fn), [:]))
             await state.setValue(builder)
         }
     ),
@@ -1109,10 +1128,10 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
             } else {
                 let head = l.head!
                 let tail = l.tail!
-                await state.push(.call(.closure(param: p, body: b, env: e)))
-                await state.push(.call(args[1]))  // initial acc
-                await state.push(.call(.list(tail)))  // rest of list
-                await state.push(.call(head))
+                await state.push(.call(.closure(param: p, body: b, env: e), [:]))
+                await state.push(.call(args[1], [:]))
+                await state.push(.call(.list(tail), [:]))
+                await state.push(.call(head, [:]))
                 await state.setValue(.closure(param: p, body: b, env: e))
             }
         }
