@@ -1,5 +1,4 @@
 //  EygInterpreter.swift
-//  Created by mechanical translation of JS source
 
 import Foundation
 
@@ -330,6 +329,9 @@ where Element: Codable & Hashable & Equatable {
     private let root: Link
     private init(_ root: Link) { self.root = root }
     public init() { self.init(.empty) }
+    public init(_ elements: [Element]) {
+        self = elements.reversed().reduce(Stack.empty) { $0.push($1) }
+    }
     public static var empty: Stack { .init() }
     public var isEmpty: Bool { if case .empty = root { true } else { false } }
     public var peek: Element? { if case let .node(v, _) = root { v } else { nil } }
@@ -404,9 +406,9 @@ extension Expr: Hashable {
             hasher.combine(n)
             hasher.combine(v)
             hasher.combine(t)
-        case let .vacant(c): 
-                    hasher.combine(4)
-                    hasher.combine(c)
+        case let .vacant(c):
+            hasher.combine(4)
+            hasher.combine(c)
         case let .binary(v):
             hasher.combine(5)
             hasher.combine(v)
@@ -472,7 +474,7 @@ public indirect enum Value: Sendable, Equatable, Hashable {
     case partial(arity: Int, applied: Stack<Value>, impl: Builtin)
     case tagged(tag: String, inner: Value)
     case record([String: Value])
-    case list(List)  // NEW
+    case list(List)
     case empty
     case tail
     case binary([UInt8])
@@ -604,7 +606,7 @@ extension Value: Codable {
     }
 }
 
-// MARK: – Ordered List (drop-in replacement for [String:Value] tails)
+// MARK: – Ordered List
 public struct List: Sendable, Equatable, Codable, CustomStringConvertible, Hashable {
     private let impl: [Value]  // simple array gives cheap Equatable
 
@@ -617,9 +619,6 @@ public struct List: Sendable, Equatable, Codable, CustomStringConvertible, Hasha
     public func cons(_ head: Value) -> List { List([head] + impl) }
     public var head: Value? { impl.first }
     public var tail: List? { impl.isEmpty ? nil : List(Array(impl.dropFirst())) }
-
-    // MARK: Codable already works via [Value]
-
     public var description: String { impl.description }
 }
 
@@ -639,7 +638,7 @@ extension UnhandledEffect {
 }
 
 /// All built-ins are just Swift closures.
-public typealias Builtin = @Sendable (inout StateMachine, [Value]) async throws -> Void
+public typealias Builtin = @Sendable (isolated StateMachine, [Value]) async throws -> Void
 
 /// Mutable interpreter state isolated in an actor.
 public actor StateMachine {
@@ -697,7 +696,7 @@ public actor StateMachine {
         case .string(let bits): setValue(.string(bits))
         case .tail: setValue(.list(.empty))
         case .cons: setValue(.partial(arity: 2, applied: .empty, impl: consBuiltin))
-        case .empty: setValue(.record([:]))  // spec: unit record
+        case .empty: setValue(.record([:]))
         case let .extend(label): setValue(.partial(arity: 2, applied: .empty, impl: extendBuiltin(label: label)))
         case let .select(label): setValue(.partial(arity: 1, applied: .empty, impl: selectBuiltin(label: label)))
         case let .overwrite(label): setValue(.partial(arity: 2, applied: .empty, impl: overwriteBuiltin(label: label)))
@@ -724,7 +723,7 @@ public actor StateMachine {
                 throw UnhandledEffect(label: "UndefinedBuiltin", payload: .string(id))
             }
             setValue(.partial(arity: entry.arity, applied: .empty, impl: entry.fn))
-        // TODO:  finish the reference / release
+        // TODO:  finish the reference / release implementation
         case let .reference(cid, _, _):
             guard let v = references[cid] else {
                 throw UnhandledEffect(label: "UndefinedReference", payload: .string(cid))
@@ -755,28 +754,13 @@ public actor StateMachine {
             push(.apply(v, env))
             env = savedEnv
             setExpression(expr)
-        case let .apply(fnVal, _): try await call(fn: fnVal, arg: v)
-        case let .call(argVal, _): try await call(fn: v, arg: argVal)
+        case let .apply(fnVal, _):
+            try await self.call(fn: fnVal, arg: v)
+        case let .call(argVal, _):
+            try await self.call(fn: v, arg: argVal)
         case let .delimit(lbl, h, deep):
-            // spec: pop unconditionally, re-add only if deep
             if deep { push(.delimit(label: lbl, handler: h, deep: true)) }
         }
-    }
-
-    // MARK: - one-shot state mutation helper
-    // method creates a mutable copy of the actor but doesn't properly handle the actor isolation.
-    // This pattern can lead to data races and breaks Swift's actor safety guarantees.
-    private func withMutableState<T: Sendable>(
-        _ body: (inout StateMachine) async throws -> T
-    ) async rethrows -> T {
-        var tmp = self  // mutable copy
-        let result = try await body(&tmp)
-        await value = tmp.value
-        await env = tmp.env
-        await stack = tmp.stack
-        await control = tmp.control
-        await isValue = tmp.isValue
-        return result
     }
 
     // MARK: call
@@ -790,16 +774,17 @@ public actor StateMachine {
         case let .partial(arity, applied, impl):
             let newApplied = applied.push(arg)
             if newApplied.reversed().count == arity {
-                try await withMutableState { sm in
-                    try await impl(&sm, newApplied.reversed())
-                }
+                try await impl(self, newApplied.reversed())
             } else {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
 
         case let .resume(cont):
             let result = try await cont.invoke(arg)
+            setStack(cont.frames)
+            setEnv(cont.env)
             setValue(result)
+            setIsValue(true)
 
         default:
             throw UnhandledEffect(label: "NotAFunction", payload: fn)
@@ -823,6 +808,16 @@ public enum IREncoder {
 
 // MARK: – Public entry point --------------------------------------------------
 
+/// Execute an expression `e` in the interpreter.
+///
+/// - Parameters:
+///   - e: The expression to evaluate.
+///   - extrinsic: A dictionary mapping effect labels to asynchronous handlers.
+///     When an effect with a matching label is raised, the corresponding handler
+///     is invoked with the effect’s payload and its result is used to resume
+///     evaluation.
+/// - Returns: The final value produced by evaluating the expression.
+/// - Throws: Any unhandled effect or runtime error encountered during evaluation.
 public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value] = [:]) async throws -> Value {
     let sm = StateMachine(src: e)
     while true {
@@ -848,9 +843,9 @@ public let interpret = exec
 private let consBuiltin: Builtin = { state, args in
     switch args[1] {
     case let .list(tail):
-        await state.setValue(.list(tail.cons(args[0])))
+        state.setValue(.list(tail.cons(args[0])))
     case .tail, .empty:
-        await state.setValue(.list(List([args[0]])))  // empty list becomes singleton
+        state.setValue(.list(List([args[0]])))  // empty list becomes singleton
     default:
         throw UnhandledEffect(label: "TypeMismatch", payload: .string("cons expects list/tail as second arg"))
     }
@@ -866,7 +861,7 @@ private func extendBuiltin(label: String) -> Builtin {
             throw UnhandledEffect(label: "TypeMismatch", payload: .string("extend expects record/empty as second arg"))
         }
         r[label] = args[0]
-        await state.setValue(.record(r))
+        state.setValue(.record(r))
     }
 }
 
@@ -882,7 +877,7 @@ private func selectBuiltin(label: String) -> Builtin {
         guard let v = r[label] else {
             throw UnhandledEffect(label: "MissingLabel", payload: .string(label))
         }
-        await state.setValue(v)
+        state.setValue(v)
     }
 }
 
@@ -897,12 +892,12 @@ private func overwriteBuiltin(label: String) -> Builtin {
                 label: "TypeMismatch", payload: .string("overwrite expects record/empty as second arg"))
         }
         r[label] = args[0]
-        await state.setValue(.record(r))
+        state.setValue(.record(r))
     }
 }
 
 private func tagBuiltin(label: String) -> Builtin {
-    return { state, args in await state.setValue(.tagged(tag: label, inner: args[0])) }
+    return { state, args in state.setValue(.tagged(tag: label, inner: args[0])) }
 }
 
 private func caseBuiltin(tag: String) -> Builtin {
@@ -924,7 +919,7 @@ private let noCasesBuiltin: Builtin = { _, args in
 private func performBuiltin(label: String) -> Builtin {
     return { state, args in
         let payload = args[0]
-        var frames = await state.stack
+        var frames = state.stack
         var collected: [Cont] = []
         var handler: Value?
 
@@ -947,237 +942,20 @@ private func performBuiltin(label: String) -> Builtin {
             for frame in collected.reversed() {
                 resumeStack = resumeStack.push(frame)
             }
-            let resume = Resume(frames: resumeStack, env: await state.env)
+            let resume = Resume(frames: resumeStack, env: state.env)
             let resumeValue = Value.resume(resume)
 
             // Capture current environment for continuations
-            let currentEnv = await state.env
+            let currentEnv = state.env
 
             // Push handler call with payload, then resume with result
-            await state.push(.call(resumeValue, currentEnv))
-            await state.push(.apply(payload, currentEnv))
+            state.push(.call(resumeValue, currentEnv))
+            state.push(.apply(payload, currentEnv))
 
-            await state.setValue(handler)
+            state.setValue(handler)
         } else {
             // Throw UnhandledEffect instead of setting unhandled
             throw UnhandledEffect(label: label, payload: payload)
         }
     }
 }
-
-// MARK: – Builtin registry ----------------------------------------------------
-
-public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
-    "equal": (
-        arity: 2,
-        fn: { state, args in
-            func deepEqual(_ a: Value, _ b: Value) -> Bool {
-                switch (a, b) {
-                case let (.binary(b1), .binary(b2)): return b1 == b2
-                case let (.int(x), .int(y)): return x == y
-                case let (.string(x), .string(y)): return x == y
-                case let (.tagged(t1, i1), .tagged(t2, i2)):
-                    return t1 == t2 && deepEqual(i1, i2)
-                case let (.record(r1), .record(r2)):
-                    return r1.count == r2.count && r1.allSatisfy { k, v in deepEqual(v, r2[k] ?? .empty) }
-                case let (.list(l1), .list(l2)):
-                    return l1.array.count == l2.array.count && zip(l1.array, l2.array).allSatisfy(deepEqual)
-                case (.empty, .empty), (.tail, .tail):
-                    return true
-                default: return false
-                }
-            }
-            await state.setValue(
-                deepEqual(args[0], args[1])
-                    ? .tagged(tag: "True", inner: .empty)
-                    : .tagged(tag: "False", inner: .empty))
-        }
-    ),
-    "fix": (
-        arity: 1,
-        fn: { state, args in
-            let builder = args[0]
-            await state.push(.call(builder, [:]))
-            await state.push(
-                .call(
-                    .partial(
-                        arity: 2, applied: .empty,
-                        impl: builtinTable["fixed"]!.fn), [:]))
-            await state.setValue(builder)
-        }
-    ),
-    "fixed": (
-        arity: 2,
-        fn: { state, args in
-            let builder = args[0]
-            let arg = args[1]
-            await state.push(.call(arg, [:]))
-            await state.push(.call(.partial(arity: 2, applied: .empty, impl: builtinTable["fixed"]!.fn), [:]))
-            await state.setValue(builder)
-        }
-    ),
-    "int_compare": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_compare expects int for argument 1"))
-            }
-            let tag = a < b ? "Lt" : (a > b ? "Gt" : "Eq")
-            await state.setValue(.tagged(tag: tag, inner: .empty))
-        }
-    ),
-    "int_add": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_add expects two ints"))
-            }
-            await state.setValue(.int(a + b))
-        }
-    ),
-    "int_subtract": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_subtract expects two ints"))
-            }
-            await state.setValue(.int(a - b))
-        }
-    ),
-    "int_multiply": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_multiply expects two ints"))
-            }
-            await state.setValue(.int(a * b))
-        }
-    ),
-    "int_divide": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_divide expects two ints"))
-            }
-            await state.setValue(b == 0 ? .tagged(tag: "Error", inner: .empty) : .tagged(tag: "Ok", inner: .int(a / b)))
-        }
-    ),
-    "int_absolute": (
-        arity: 1,
-        fn: { state, args in
-            guard case let .int(a) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_absolute expects an int"))
-            }
-            await state.setValue(.int(abs(a)))
-        }
-    ),
-    "int_parse": (
-        arity: 1,
-        fn: { state, args in
-            guard case let .string(str) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_parse expects a string"))
-            }
-            if let n = Int(str) {
-                await state.setValue(.tagged(tag: "Ok", inner: .int(n)))
-            } else {
-                await state.setValue(.tagged(tag: "Error", inner: .empty))
-            }
-        }
-    ),
-    "int_to_string": (
-        arity: 1,
-        fn: { state, args in
-            guard case let .int(a) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_to_string expects an int"))
-            }
-            await state.setValue(.string(String(a)))
-        }
-    ),
-    "string_append": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .string(a) = args[0], case let .string(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("string_append expects two strings"))
-            }
-            await state.setValue(.string(a + b))
-        }
-    ),
-    "string_split": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .string(a) = args[0], case let .string(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("string_split expects two strings"))
-            }
-            let parts = a.split(separator: Character(b), omittingEmptySubsequences: false).map(String.init)
-            let head = parts.first ?? ""
-            let tail = List(parts.dropFirst().map(Value.string))
-            await state.setValue(.record(["head": .string(head), "tail": .list(tail)]))
-        }
-    ),
-    "string_split_once": (
-        arity: 2,
-        fn: { state, args in
-            guard case let .string(a) = args[0], case let .string(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("string_split_once expects two strings"))
-            }
-            if let range = a.range(of: b) {
-                let pre = String(a[..<range.lowerBound])
-                let post = String(a[range.upperBound...])
-                await state.setValue(.tagged(tag: "Ok", inner: .record(["pre": .string(pre), "post": .string(post)])))
-            } else {
-                await state.setValue(.tagged(tag: "Error", inner: .empty))
-            }
-        }
-    ),
-    "string_length": (
-        arity: 1,
-        fn: { state, args in
-            guard case let .string(a) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("string_length expects a string"))
-            }
-            await state.setValue(.int(a.count))
-        }
-    ),
-    "list_fold": (
-        arity: 3,
-        fn: { state, args in
-            guard case let .list(l) = args[0],
-                case let .closure(p, b, e) = args[2]
-            else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("list_fold expects a list and a closure"))
-            }
-            if l.isEmpty {
-                await state.setValue(args[1])
-            } else {
-                let head = l.head!
-                let tail = l.tail!
-                await state.push(.call(.closure(param: p, body: b, env: e), [:]))
-                await state.push(.call(args[1], [:]))
-                await state.push(.call(.list(tail), [:]))
-                await state.push(.call(head, [:]))
-                await state.setValue(.closure(param: p, body: b, env: e))
-            }
-        }
-    ),
-    "list_pop": (
-        arity: 1,
-        fn: { state, args in
-            guard case let .list(l) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("list_pop expects list"))
-            }
-            if l.isEmpty {
-                await state.setValue(.tagged(tag: "Error", inner: .empty))
-            } else {
-                let head = l.head!
-                let tail = l.tail!
-                await state.setValue(
-                    .tagged(
-                        tag: "Ok",
-                        inner: .record([
-                            "head": head,
-                            "tail": .list(tail)
-                        ])))
-            }
-        }
-    )
-]

@@ -17,5 +17,6 @@ DerivedData/
 .swiftpm/
 Package.resolved
 *.xcodeproj
+.sourcekit-lsp/
 
 .fake
