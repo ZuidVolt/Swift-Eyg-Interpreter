@@ -54,9 +54,10 @@ struct Runner {
 
                 let result = try await exec(expr, extrinsic: extrinsic)
                 print("\(file.lastPathComponent) → \(result)")
-                print("-------------")
+                print("--------------------------")
             } catch {
                 print("\(file.lastPathComponent) → ERROR: \(error)")
+                print("---ERROR OCCURRED ABOVE---")
             }
         }
 
