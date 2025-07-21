@@ -30,12 +30,17 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 1,
         fn: { state, args in
             let builder = args[0]
-            state.push(.call(builder, [:]))
-            state.push(
-                .call(
-                    .partial(
-                        arity: 2, applied: .empty,
-                        impl: builtinTable["fixed"]!.fn), [:]))
+
+            // Create the fixed partial with builder already applied
+            let fixedPartial = Value.partial(
+                arity: 2,
+                applied: Stack([builder]),
+                impl: builtinTable["fixed"]!.fn
+            )
+
+            // Push the fixed partial to be called
+            state.push(.call(fixedPartial, state.env))
+            // Set builder as the function to call
             state.setValue(builder)
         }
     ),
@@ -44,8 +49,19 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         fn: { state, args in
             let builder = args[0]
             let arg = args[1]
-            state.push(.call(arg, [:]))
-            state.push(.call(.partial(arity: 2, applied: .empty, impl: builtinTable["fixed"]!.fn), [:]))
+
+            // Create the fixed partial with builder already applied
+            let fixedPartial = Value.partial(
+                arity: 2,
+                applied: Stack([builder]),
+                impl: builtinTable["fixed"]!.fn
+            )
+
+            // Push the argument to be consumed by builder
+            state.push(.call(arg, state.env))
+            // Push the fixed partial as the second argument to builder
+            state.push(.call(fixedPartial, state.env))
+            // Set builder as the function to call
             state.setValue(builder)
         }
     ),
