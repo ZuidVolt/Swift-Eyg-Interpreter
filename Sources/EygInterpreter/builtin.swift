@@ -106,9 +106,14 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 2,
         fn: { state, args in
             guard case let .int(a) = args[0], case let .int(b) = args[1] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_divide expects two ints"))
+                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_divide expects int for argument 1"))
             }
-            state.setValue(b == 0 ? .tagged(tag: "Error", inner: .empty) : .tagged(tag: "Ok", inner: .int(a / b)))
+            if b == 0 {
+                state.setValue(.tagged(tag: "Error", inner: .empty))
+            } else {
+                let result = Int((Double(a) / Double(b)).rounded(.down))
+                state.setValue(.tagged(tag: "Ok", inner: .int(result)))
+            }
         }
     ),
     "int_absolute": (
@@ -124,9 +129,10 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 1,
         fn: { state, args in
             guard case let .string(str) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_parse expects a string"))
+                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_parse expects string for argument 1"))
             }
-            if let n = Int(str) {
+            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let n = Int(trimmed), String(n) == trimmed {
                 state.setValue(.tagged(tag: "Ok", inner: .int(n)))
             } else {
                 state.setValue(.tagged(tag: "Error", inner: .empty))
