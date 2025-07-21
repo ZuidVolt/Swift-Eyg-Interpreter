@@ -298,60 +298,7 @@ extension Cont: Equatable, Hashable {
         }
     }
 }
-// MARK: Stack
-/// Immutable stack used for continuations and partial applications.
-public struct Stack<Element: Sendable>: Sendable, Codable
-where Element: Codable & Hashable & Equatable {
 
-    private indirect enum Link: Sendable, Codable, Hashable, Equatable {
-        case empty
-        case node(Element, Link)
-
-        static func == (lhs: Link, rhs: Link) -> Bool {
-            switch (lhs, rhs) {
-            case (.empty, .empty): return true
-            case let (.node(l1, n1), .node(l2, n2)): return l1 == l2 && n1 == n2
-            default: return false
-            }
-        }
-
-        func hash(into hasher: inout Hasher) {
-            switch self {
-            case .empty: hasher.combine(0)
-            case let .node(v, n):
-                hasher.combine(1)
-                hasher.combine(v)
-                hasher.combine(n)
-            }
-        }
-    }
-
-    private let root: Link
-    private init(_ root: Link) { self.root = root }
-    public init() { self.init(.empty) }
-    public init(_ elements: [Element]) {
-        self = elements.reversed().reduce(Stack.empty) { $0.push($1) }
-    }
-    public static var empty: Stack { .init() }
-    public var isEmpty: Bool { if case .empty = root { true } else { false } }
-    public var peek: Element? { if case let .node(v, _) = root { v } else { nil } }
-    public func push(_ e: Element) -> Stack { Stack(.node(e, root)) }
-    public func pop() -> Stack { if case let .node(_, n) = root { Stack(n) } else { self } }
-    public func reversed() -> [Element] {
-        var out: [Element] = []
-        var cur = root
-        while case let .node(v, next) = cur {
-            out.append(v)
-            cur = next
-        }
-        return out
-    }
-}
-
-extension Stack: Equatable, Hashable where Element: Equatable & Hashable {
-    public static func == (lhs: Stack, rhs: Stack) -> Bool { lhs.root == rhs.root }
-    public func hash(into hasher: inout Hasher) { hasher.combine(root) }
-}
 
 // MARK: – Value (runtime) -----------------------------------------------------
 
@@ -606,6 +553,74 @@ extension Value: Codable {
     }
 }
 
+// MARK: Stack
+/// Immutable stack used for continuations and partial applications.
+public struct Stack<Element: Sendable>: Sendable, Codable
+where Element: Codable & Hashable & Equatable {
+
+    private indirect enum Link: Sendable, Codable, Hashable, Equatable {
+        case empty
+        case node(Element, Link)
+
+        static func == (lhs: Link, rhs: Link) -> Bool {
+            switch (lhs, rhs) {
+            case (.empty, .empty): return true
+            case let (.node(l1, n1), .node(l2, n2)): return l1 == l2 && n1 == n2
+            default: return false
+            }
+        }
+
+        func hash(into hasher: inout Hasher) {
+            switch self {
+            case .empty: hasher.combine(0)
+            case let .node(v, n):
+                hasher.combine(1)
+                hasher.combine(v)
+                hasher.combine(n)
+            }
+        }
+    }
+
+    private let root: Link
+    private init(_ root: Link) { self.root = root }
+    public init() { self.init(.empty) }
+    public init(_ elements: [Element]) {
+        self = elements.reversed().reduce(Stack.empty) { $0.push($1) }
+    }
+    public static var empty: Stack { .init() }
+    public var isEmpty: Bool { if case .empty = root { true } else { false } }
+    public var peek: Element? { if case let .node(v, _) = root { v } else { nil } }
+    public func push(_ e: Element) -> Stack { Stack(.node(e, root)) }
+    public func pop() -> Stack { if case let .node(_, n) = root { Stack(n) } else { self } }
+    public func reversed() -> [Element] {
+        var out: [Element] = []
+        var cur = root
+        while case let .node(v, next) = cur {
+            out.append(v)
+            cur = next
+        }
+        return out
+    }
+    public func toArray() -> [Element] {
+        var out: [Element] = []
+        var cur = root
+        var stack: [Element] = []
+        while case let .node(v, next) = cur {
+            stack.append(v)
+            cur = next
+        }
+        while !stack.isEmpty {
+            out.append(stack.removeLast())
+        }
+        return out
+    }
+}
+
+extension Stack: Equatable, Hashable where Element: Equatable & Hashable {
+    public static func == (lhs: Stack, rhs: Stack) -> Bool { lhs.root == rhs.root }
+    public func hash(into hasher: inout Hasher) { hasher.combine(root) }
+}
+
 // MARK: – Ordered List
 public struct List: Sendable, Equatable, Codable, CustomStringConvertible, Hashable {
     private let impl: [Value]  // simple array gives cheap Equatable
@@ -773,8 +788,9 @@ public actor StateMachine {
 
         case let .partial(arity, applied, impl):
             let newApplied = applied.push(arg)
-            if newApplied.reversed().count == arity {
-                try await impl(self, newApplied.reversed())
+            let args = newApplied.toArray()
+            if args.count == arity {
+                try await impl(self, args)
             } else {
                 setValue(.partial(arity: arity, applied: newApplied, impl: impl))
             }
