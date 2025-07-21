@@ -49,10 +49,10 @@ struct Runner {
 
         for file in files {
             do {
-                let expr = try IRDecoder.decode(Data(contentsOf: file))
-                print("Decoded: \(expr)")
+                let source = try IRDecoder.decode(Data(contentsOf: file))
+                print("Decoded: \(source)")
 
-                let result = try await exec(expr, extrinsic: extrinsic)
+                let result = try await exec(source, extrinsic: extrinsic)
                 print("\(file.lastPathComponent) → \(result)")
                 print("--------------------------")
             } catch {

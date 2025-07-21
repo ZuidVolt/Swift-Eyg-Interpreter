@@ -824,18 +824,18 @@ public enum IREncoder {
 
 // MARK: – Public entry point --------------------------------------------------
 
-/// Execute an expression `e` in the interpreter.
+/// Execute an source `s` in the interpreter.
 ///
 /// - Parameters:
-///   - e: The expression to evaluate.
+///   - s: The source to evaluate.
 ///   - extrinsic: A dictionary mapping effect labels to asynchronous handlers.
 ///     When an effect with a matching label is raised, the corresponding handler
 ///     is invoked with the effect’s payload and its result is used to resume
 ///     evaluation.
 /// - Returns: The final value produced by evaluating the expression.
 /// - Throws: Any unhandled effect or runtime error encountered during evaluation.
-public func exec(_ e: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value] = [:]) async throws -> Value {
-    let sm = StateMachine(src: e)
+public func exec(_ s: Expr, extrinsic: [String: @Sendable (Value) async throws -> Value] = [:]) async throws -> Value {
+    let sm = StateMachine(src: s)
     while true {
         do {
             try await sm.step()
