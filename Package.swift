@@ -9,7 +9,7 @@ let package = Package(
     .executableTarget(
       name: "EygRunner",
       dependencies: ["EygInterpreter"],
-      resources: [.copy("examples"), .copy("notWorkingExamples")]
+      resources: [.copy("examples")]
     ),
   ]
 )
