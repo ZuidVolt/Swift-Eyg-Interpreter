@@ -12,17 +12,20 @@ check: format lint
 clean:
     swift package clean
 
-build:
-    swift build
+build-runner:
+    swift build -c release --product EygRunner
+
+hello-example:
+    cat Sources/EygRunnerTest/examples/hello.json | .build/arm64-apple-macosx/release/EygRunner
 
 test:
     swift test
 
 run:
-    swift run EygRunner
+    swift run EygRunnerTest
 
 release:
-    swift run -c release EygRunner \
+    swift run -c release EygRunnerTest \
     -Xswiftc -whole-module-optimization \
     -Xswiftc -cross-module-optimization \
     -Xcc -march=native \

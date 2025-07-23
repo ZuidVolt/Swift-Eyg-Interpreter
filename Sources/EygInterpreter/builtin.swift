@@ -129,7 +129,8 @@ public let builtinTable: [String: (arity: Int, fn: Builtin)] = [
         arity: 1,
         fn: { state, args in
             guard case let .string(str) = args[0] else {
-                throw UnhandledEffect(label: "TypeMismatch", payload: .string("int_parse expects string for argument 1"))
+                throw UnhandledEffect(
+                    label: "TypeMismatch", payload: .string("int_parse expects string for argument 1"))
             }
             let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
             if let n = Int(trimmed), String(n) == trimmed {

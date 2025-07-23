@@ -30,38 +30,15 @@ private let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
 
 struct Runner {
     static func main() async {
-        guard let examplesDir = Bundle.module.url(forResource: "examples", withExtension: nil) else {
-            fatalError("Resource folder ‘examples’ not found")
-        }
-
-        let files: [URL]
         do {
-            files = try FileManager.default
-                .contentsOfDirectory(at: examplesDir, includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension == "json" }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            let inputData = FileHandle.standardInput.readDataToEndOfFile()
+            let source = try IRDecoder.decode(inputData)
+            // print("Decoded: \(source)")
+            let result = try await exec(source, extrinsic: extrinsic)
+            print("\(result)")
         } catch {
-            print("---- Error reading examples directory: \(error)")
-            files = []
+            print("ERROR: \(error)")
         }
-
-        print("---- Running \(files.count) example(s) via extrinsic handlers\n")
-
-        for file in files {
-            do {
-                let source = try IRDecoder.decode(Data(contentsOf: file))
-                print("Decoded: \(source)")
-
-                let result = try await exec(source, extrinsic: extrinsic)
-                print("\(file.lastPathComponent) → \(result)")
-                print("--------------------------")
-            } catch {
-                print("\(file.lastPathComponent) → ERROR: \(error)")
-                print("---ERROR OCCURRED ABOVE---")
-            }
-        }
-
-        print("\n---- Finished")
     }
 }
 

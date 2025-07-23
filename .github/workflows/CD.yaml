@@ -1,0 +1,144 @@
+name: build and release on tag push
+
+permissions:
+  contents: write
+  issues: write
+
+on:
+  push:
+    tags:
+      - "*"
+
+# ------------------------------------------------------------------
+# Global switches – flip these to "false" to skip a platform or caching
+# ------------------------------------------------------------------
+env:
+  PRODUCT_NAME: "EygRunner"
+  SWIFT_VERSION: "6.1"
+  BUILD_MACOS_ARM64: "true"
+  BUILD_LINUX_X86_64: "true"
+  BUILD_LINUX_ARM64: "true"
+  CACHE_SWIFT_DEPS: "false"
+
+jobs:
+  matrix-build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-14
+            swift_version: "6.1"
+            triple: ""
+            suffix: ""
+
+          - target: linux-x86_64
+            os: ubuntu-22.04
+            swift_version: "6.1"
+            triple: "--static-swift-stdlib --triple x86_64-linux-gnu"
+            suffix: ""
+
+          - target: linux-arm64
+            os: ubuntu-22.04
+            swift_version: "6.1"
+            triple: "--static-swift-stdlib --triple aarch64-linux-gnu"
+            suffix: ""
+
+    steps:
+      # ------------------------------------------------------------------
+      # Early-exit if the current target is disabled
+      # ------------------------------------------------------------------
+      - name: Skip if build is disabled
+        if: |
+          !(
+            (matrix.target == 'macos-arm64' && env.BUILD_MACOS_ARM64 == 'true') ||
+            (matrix.target == 'linux-x86_64' && env.BUILD_LINUX_X86_64 == 'true') ||
+            (matrix.target == 'linux-arm64' && env.BUILD_LINUX_ARM64 == 'true')
+          )
+        run: |
+          echo "Skipping ${{ matrix.target }} because it is disabled."
+          exit 0
+
+      # ------------------------------------------------------------------
+      # Checkout sources
+      # ------------------------------------------------------------------
+      - name: Checkout
+        if: |
+          (matrix.target == 'macos-arm64' && env.BUILD_MACOS_ARM64 == 'true') ||
+          (matrix.target == 'linux-x86_64' && env.BUILD_LINUX_X86_64 == 'true') ||
+          (matrix.target == 'linux-arm64' && env.BUILD_LINUX_ARM64 == 'true')
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Swift
+        if: |
+          (matrix.target == 'macos-arm64' && env.BUILD_MACOS_ARM64 == 'true') ||
+          (matrix.target == 'linux-x86_64' && env.BUILD_LINUX_X86_64 == 'true') ||
+          (matrix.target == 'linux-arm64' && env.BUILD_LINUX_ARM64 == 'true')
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: ${{ matrix.swift_version }}
+
+      # ------------------------------------------------------------------
+      # Cache SPM dependencies (Package.resolved)
+      # ------------------------------------------------------------------
+      - name: Cache Swift .build directory
+        if: |
+          env.CACHE_SWIFT_DEPS == 'true' &&
+          (
+            (matrix.target == 'macos-arm64' && env.BUILD_MACOS_ARM64 == 'true') ||
+            (matrix.target == 'linux-x86_64' && env.BUILD_LINUX_X86_64 == 'true') ||
+            (matrix.target == 'linux-arm64' && env.BUILD_LINUX_ARM64 == 'true')
+          )
+        uses: actions/cache@v4
+        with:
+          path: .build
+          # stable key: only changes when OS, Swift version, or committed Package.resolved changes
+          key: swiftpm-${{ runner.os }}-${{ matrix.swift_version }}-${{ hashFiles('Package.resolved') || 'no-deps' }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ matrix.swift_version }}-
+
+      # ------------------------------------------------------------------
+      # Build the release binary
+      # ------------------------------------------------------------------
+      - name: Build
+        if: |
+          (matrix.target == 'macos-arm64' && env.BUILD_MACOS_ARM64 == 'true') ||
+          (matrix.target == 'linux-x86_64' && env.BUILD_LINUX_X86_64 == 'true') ||
+          (matrix.target == 'linux-arm64' && env.BUILD_LINUX_ARM64 == 'true')
+        run: |
+          SWIFT_BUILD_ARGS="-c release --product ${{ env.PRODUCT_NAME }} ${{ matrix.triple }}"
+          swift build $SWIFT_BUILD_ARGS
+
+          # Locate the built binary
+          BIN=".build/release/${{ env.PRODUCT_NAME }}${{ matrix.suffix }}"
+
+          # Make it executable (Unix targets)
+          chmod +x "$BIN"
+
+          # Final file name for the archive
+          OUT="${{ env.PRODUCT_NAME }}-${{ matrix.target }}"
+
+          # Create a compressed tarball
+          tar -czf "${OUT}.tar.gz" -C "$(dirname "$BIN")" "$(basename "$BIN")"
+
+      # ------------------------------------------------------------------
+      # Attach the binary to the GitHub Release that the tag created
+      # ------------------------------------------------------------------
+      - name: Create GitHub Release
+        if: |
+          (matrix.target == 'macos-arm64' && env.BUILD_MACOS_ARM64 == 'true') ||
+          (matrix.target == 'linux-x86_64' && env.BUILD_LINUX_X86_64 == 'true') ||
+          (matrix.target == 'linux-arm64' && env.BUILD_LINUX_ARM64 == 'true')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ github.event.head_commit.message || format('Tagged {0}', github.ref_name) }}
+          files: |
+            ${{ env.PRODUCT_NAME }}-${{ matrix.target }}*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
