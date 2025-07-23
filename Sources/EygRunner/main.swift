@@ -1,6 +1,5 @@
 //
 //  Sources/EygRunner/main.swift
-//  Effect-only runner – no built-ins, easy to extend.
 //
 
 import EygInterpreter
@@ -23,7 +22,7 @@ private let extrinsic: [String: @Sendable (Value) async throws -> Value] = [
             throw UnhandledEffect.create(label: "MissingPrintHandler", payload: payload)
         }
         return try await printHandler(payload)
-    }
+    },
 ]
 
 // MARK: - Runner -------------------------------------------------------------

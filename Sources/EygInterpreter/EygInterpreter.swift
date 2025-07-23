@@ -112,7 +112,8 @@ public indirect enum Expr: Sendable, Codable {
         case "#":
             let cid = try c.decode(String.self, forKey: .label)
             if let pkg = try c.decodeIfPresent(String.self, forKey: .project),
-                let ver = try c.decodeIfPresent(Int.self, forKey: .release) {
+                let ver = try c.decodeIfPresent(Int.self, forKey: .release)
+            {
                 self = .release(pkg: pkg, ver: ver, cid: cid)
             } else {
                 self = .reference(cid: cid, project: nil, release: nil)
@@ -482,6 +483,7 @@ extension Value: Codable {
         case int, string, closure, tagged, record, list, empty, tail, binary
         case partial, resume
     }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch c.allKeys.first {
@@ -524,6 +526,7 @@ extension Value: Codable {
                     debugDescription: "Value contains non-codable Builtin/Resume"))
         }
     }
+
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
@@ -586,6 +589,7 @@ where Element: Codable & Hashable & Equatable {
     public init(_ elements: [Element]) {
         self = elements.reversed().reduce(Stack.empty) { $0.push($1) }
     }
+
     public static var empty: Stack { .init() }
     public var isEmpty: Bool { if case .empty = root { true } else { false } }
     public var peek: Element? { if case let .node(v, _) = root { v } else { nil } }
@@ -600,6 +604,7 @@ where Element: Codable & Hashable & Equatable {
         }
         return out
     }
+
     public func toArray() -> [Element] {
         var out: [Element] = []
         var cur = root
@@ -670,6 +675,7 @@ public actor StateMachine {
         value = v
         isValue = true
     }
+
     fileprivate func setStack(_ s: Stack<Cont>) { stack = s }
     fileprivate func setIsValue(_ b: Bool) { isValue = b }
     fileprivate func setEnv(_ e: Env) { env = e }
@@ -749,7 +755,7 @@ public actor StateMachine {
                 payload: .record([
                     "package": .string(pkg),
                     "release": .int(ver),
-                    "cid": .string(cid)
+                    "cid": .string(cid),
                 ]))
         }
     }
