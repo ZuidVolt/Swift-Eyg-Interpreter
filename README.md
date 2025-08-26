@@ -10,7 +10,7 @@ This interpreter is based on the [JavaScript Interpreter for EYG](https://github
 
 For production-ready EYG interpreters, use the official implementations at [eyg.run](https://eyg.run/).
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # Clone & run
@@ -60,7 +60,7 @@ Serialize program states when an effect is raised → seamless upgrades & crash-
 
 Treats code as a structured tree (not flat text) → more reliable program manipulation.
 
-## 📁 Project Structure
+## Project Structure
 
 ```txt
 SwiftEygInterpreter/
@@ -98,13 +98,13 @@ let expr = try IRDecoder.decode(programData)
 let result = try await exec(expr, extrinsic: extrinsic)
 ```
 
-## 📚 Resources
+## Resources
 
 - **Language Website**: [eyg.run](https://eyg.run/) (the real thing!)
 - **EYG Source**: [eyg-lang](https://github.com/CrowdHailer/eyg-lang)
 - **Specification**: Available at [eyg spec](https://github.com/CrowdHailer/eyg-lang/tree/main/spec)
 
-## 📄 License
+## License
 
 Licensed under the [GNU General Public License v3.0](LICENSE).
 
